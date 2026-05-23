@@ -258,9 +258,38 @@ textarea {
   gap: 0.45rem;
 }
 
+.voice-options {
+  margin-top: 0.55rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.voice-options label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.voice-options select {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(6, 30, 29, 0.9);
+  color: var(--text);
+  padding: 0.48rem 0.55rem;
+}
+
 .voice-transcript {
   margin-top: 0.55rem;
   color: var(--muted);
+}
+
+.voice-hint {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .bg-canvas.nebula {
@@ -621,6 +650,10 @@ textarea {
   }
 
   .meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-options {
     grid-template-columns: 1fr;
   }
 

@@ -13,6 +13,17 @@ export default function ChatInterface() {
     await submitQuery(input);
   }
 
+  async function onSendFromVoice() {
+    if (!input.trim()) {
+      return;
+    }
+    await submitQuery(input);
+  }
+
+  function onClearInputFromVoice() {
+    setInput("");
+  }
+
   return (
     <section className="chat-shell">
       <header className="chat-header">
@@ -55,7 +66,12 @@ export default function ChatInterface() {
         </button>
       </form>
 
-      <VoiceControls onTranscript={(text) => setInput(text)} speechText={reply?.response ?? ""} />
+      <VoiceControls
+        onTranscript={setInput}
+        onSend={onSendFromVoice}
+        onClearInput={onClearInputFromVoice}
+        speechText={reply?.response ?? ""}
+      />
 
       <article className="response-card">
         <h2>Response</h2>

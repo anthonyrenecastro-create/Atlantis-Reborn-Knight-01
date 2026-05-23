@@ -27,7 +27,9 @@ type VoiceApi = {
   listening: boolean;
   speaking: boolean;
   transcript: string;
+  language: string;
   error: string | null;
+  setLanguage: (lang: string) => void;
   startListening: () => void;
   stopListening: () => void;
   speak: (text: string) => void;
@@ -47,6 +49,7 @@ export function useVoice(): VoiceApi {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [language, setLanguage] = useState("en-US");
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
@@ -82,7 +85,7 @@ export function useVoice(): VoiceApi {
     const recognition = recognitionRef.current;
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
+    recognition.lang = language;
 
     recognition.onresult = (event) => {
       const parts: string[] = [];
@@ -92,7 +95,11 @@ export function useVoice(): VoiceApi {
           parts.push(alt.transcript);
         }
       }
-      setTranscript(parts.join(" ").trim());
+      const next = parts
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      setTranscript(next);
     };
 
     recognition.onerror = () => {
@@ -111,7 +118,7 @@ export function useVoice(): VoiceApi {
       setError("Unable to start voice capture.");
       setListening(false);
     }
-  }, [supported]);
+  }, [language, supported]);
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
@@ -154,7 +161,9 @@ export function useVoice(): VoiceApi {
     listening,
     speaking,
     transcript,
+    language,
     error,
+    setLanguage,
     startListening,
     stopListening,
     speak,
