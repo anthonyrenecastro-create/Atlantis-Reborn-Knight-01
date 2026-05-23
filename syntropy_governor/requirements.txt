@@ -1,0 +1,8 @@
+flask
+flask-cors
+torch
+numpy
+scikit-learn
+cryptography
+requests
+python-dotenv

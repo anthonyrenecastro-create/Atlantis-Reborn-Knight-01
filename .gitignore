@@ -1,0 +1,14 @@
+# Dependency/build artifacts
+**/node_modules/
+**/dist/
+**/__pycache__/
+*.pyc
+*.pyo
+*.tsbuildinfo
+
+# Workspace artifacts
+syntropy_governor_corrected/
+syntropy_governor_corrected.zip
+
+# Local runtime artifacts
+*.log

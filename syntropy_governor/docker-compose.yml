@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  syntropy-governor-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "5001:5001"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - syntropy-net
+
+  syntropy-governor-frontend:
+    build:
+      context: ./consciousness/studious-enigma-main
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - syntropy-governor-backend
+    environment:
+      - VITE_API_URL=http://localhost:5001
+    restart: unless-stopped
+    networks:
+      - syntropy-net
+
+  governor-monitoring:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    networks:
+      - syntropy-net
+
+volumes:
+  grafana-data:
+
+networks:
+  syntropy-net:
+    driver: bridge

@@ -1,0 +1,20 @@
+"""
+Atlantean Core State - IRREPLACEABLE
+
+This file represents the serialized state of the Atlantean Intelligence Core.
+It contains the field dynamics (φ₁, φ₅, Φ, Θ) that constitute the learned intelligence.
+
+⚠️ CRITICAL: This file must NEVER be deleted or lost.
+If this file is damaged, all learned intelligence is lost.
+
+Size: Typically < 5MB for standard grid configurations
+Location: Must persist locally with the user
+Backup: Should be versioned and backed up regularly
+
+To load this state, use:
+    from hot_memory import AtlanteanHotMemory
+    core = AtlanteanHotMemory.load("core_state.bin")
+
+To save this state, use:
+    core.save("core_state.bin")
+"""
