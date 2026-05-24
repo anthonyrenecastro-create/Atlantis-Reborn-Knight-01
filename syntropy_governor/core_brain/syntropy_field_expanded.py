@@ -16,6 +16,12 @@ import json
 from datetime import datetime
 import hashlib
 from collections import deque
+import os
+
+try:
+    from cuda_pde_kernel import pde_step_cuda
+except Exception:
+    pde_step_cuda = None
 
 logging.basicConfig(level=logging.INFO)
 
@@ -111,7 +117,7 @@ class FieldEnhancedSNN(nn.Module):
         else:
             H, W = size
         self.H, self.W = H, W
-        self.device = device or torch.device('cpu')
+        self.device = torch.device(device) if device is not None else torch.device('cpu')
 
         # PDE parameters
         self.alpha = alpha
@@ -139,6 +145,12 @@ class FieldEnhancedSNN(nn.Module):
         lap = torch.tensor([[0., 1., 0.], [1., -4., 1.], [0., 1., 0.]], device=self.device)
         self.register_buffer('lap_kernel', lap.view(1, 1, 3, 3))
 
+        # Optional custom CUDA PDE kernel path for 1000Hz physics scaling.
+        use_cuda_env = os.getenv("SYNTROPY_USE_CUDA_PDE", "true").lower() in {"1", "true", "yes"}
+        self.use_cuda_pde = bool(use_cuda_env and pde_step_cuda is not None and self.device.type == "cuda")
+        if use_cuda_env and pde_step_cuda is None:
+            logging.info("Custom CUDA PDE kernel unavailable; using PyTorch PDE fallback.")
+
     def laplacian(self, x: torch.Tensor) -> torch.Tensor:
         """Compute discrete Laplacian using conv2d with padding=1."""
         # x assumed shape (1,1,H,W)
@@ -148,6 +160,26 @@ class FieldEnhancedSNN(nn.Module):
         return self.laplacian(self.laplacian(x))
 
     def pde_step(self, dt: float = 0.01):
+        if self.use_cuda_pde and self.phi1.is_cuda and self.phi5.is_cuda and self.Phi.is_cuda:
+            cuda_out = pde_step_cuda(
+                self.phi1.contiguous(),
+                self.phi5.contiguous(),
+                self.Phi.contiguous(),
+                alpha=float(self.alpha),
+                zeta=float(self.zeta),
+                gamma1=float(self.gamma1),
+                beta=float(self.beta),
+                omega=float(self.omega),
+                theta=float(self.theta),
+                gamma5=float(self.gamma5),
+                dt=float(dt),
+            )
+            if cuda_out is not None:
+                next_phi1, next_phi5 = cuda_out
+                self.phi1.copy_(next_phi1)
+                self.phi5.copy_(next_phi5)
+                return
+
         # Spatial derivatives
         lap_phi1 = self.laplacian(self.phi1)
         bi_lap_phi1 = self.bi_laplacian(self.phi1)

@@ -7,7 +7,7 @@
 - **Core Brain** — Syntropy AdvancedTextGenerationNN + PDE-SNN (field-modulated generation, no external LLMs)
 - **Governor** — cognitive_sim (security, validation, logging, adversarial monitoring)
 
-No Gemini. No OpenAI. No vendor lock-in. Everything runs on your machine.
+No Gemini. No OpenAI. No OpenRouter. No vendor lock-in. Everything runs on your machine.
 
 ---
 
@@ -42,6 +42,33 @@ The `atlantean_syntropy_bridge.py` is the living heart that:
 - Converts Atlantean field state into Syntropy `field_state` vectors
 - Runs every generation through the 4-pass recurrent + PDE-SNN pipeline
 - Feeds user feedback (👍 ✏️) back into both memory systems
+- Logs interactions for sovereign local training exports
+
+## Sovereign Training Workflow
+
+The system now supports a fully local training loop:
+
+1. Run the app and generate interactions.
+2. Export training rows from backend at `/api/atlantean/training/export`.
+3. Fine-tune the core model checkpoint with the exported JSONL.
+
+Export example:
+
+```bash
+curl "http://localhost:5001/api/atlantean/training/export?limit=1500"
+```
+
+Train example:
+
+```bash
+python core_brain/train_on_dataset.py \
+    --dataset unified_backend/exports/sovereign_training_dataset_<timestamp>.jsonl \
+    --checkpoint core_brain/shakespeare_model.pt \
+    --output core_brain/shakespeare_model_sovereign.pt \
+    --epochs 2 \
+    --batch-size 8 \
+    --seq-len 128
+```
 
 ---
 
@@ -52,7 +79,7 @@ The `atlantean_syntropy_bridge.py` is the living heart that:
 - ✅ Atlantean field dynamics fully connected and learning signals working
 - ✅ Docker Compose + one-command startup script
 - ✅ Governor monitoring (Grafana) ready
-- ✅ Zero external APIs — 100% local
+- ✅ Zero external APIs — 100% local and sovereign
 
 **This is now a fully functional unified system.** The UI will give rich, thematic responses modulated by the living fields even while the Core Brain continues to improve.
 

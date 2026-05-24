@@ -195,6 +195,13 @@ textarea {
   white-space: pre-wrap;
 }
 
+.feedback-row {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .meta-grid {
   margin-top: 0.9rem;
   display: grid;
@@ -234,6 +241,75 @@ textarea {
 .warning {
   margin-top: 0.75rem;
   color: #ffc17d;
+}
+
+.sovereign-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.sovereign-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sovereign-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sovereign-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.sovereign-grid div {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sovereign-grid input {
+  margin-top: 0.15rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(6, 30, 29, 0.9);
+  color: var(--text);
+  padding: 0.45rem 0.55rem;
+}
+
+.sovereign-grid strong {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.sovereign-actions {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.training-log {
+  margin-top: 0.75rem;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(0, 0, 0, 0.26);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
 }
 
 .voice-shell {

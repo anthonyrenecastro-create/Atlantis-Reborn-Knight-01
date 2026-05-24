@@ -6,3 +6,4 @@ scikit-learn
 cryptography
 requests
 python-dotenv
+datasets

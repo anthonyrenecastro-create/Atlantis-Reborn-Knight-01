@@ -20,3 +20,7 @@ This module adds baseline governance controls to the unified backend:
 - `GOVERNOR_MAX_INPUT_CHARS` (default: `4000`)
 - `GOVERNOR_AUDIT_BUFFER_SIZE` (default: `200`)
 - `GOVERNOR_AUDIT_LOG` (default: `governor/audit.log`)
+- `GOVERNOR_REQUIRE_API_KEY` (default: `false`)
+- `GOVERNOR_API_KEY` (default: empty)
+
+When API-key auth is enabled, protected `/api/*` routes require either `X-API-Key` or `Authorization: Bearer <key>`.

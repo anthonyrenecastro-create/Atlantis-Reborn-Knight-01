@@ -1,12 +1,18 @@
 import { useCallback, useMemo, useState } from "react";
 
 export type BackendResponse = {
+  interaction_id?: string;
   response?: string;
   error?: string | boolean;
   metadata?: {
     mode?: string;
     latency_ms?: number;
     warning?: string | null;
+    sovereign?: {
+      local_only?: boolean;
+      local_quality?: number;
+      fallback_used?: boolean;
+    };
   };
   field_state?: {
     phi1_mean?: number;
@@ -19,6 +25,33 @@ export type AtlanteanFieldState = {
   phi1_mean: number;
   phi5_mean: number;
   Phi: number;
+};
+
+export type SovereignStatus = {
+  local_only: boolean;
+  stats?: Record<string, number | string | null>;
+  training_export_path?: string;
+  active_model_path?: string | null;
+};
+
+export type TrainingJob = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  created_at: number;
+  updated_at: number;
+  started_at?: number | null;
+  finished_at?: number | null;
+  params?: Record<string, unknown>;
+  dataset_path?: string | null;
+  output_checkpoint?: string | null;
+  process_exit_code?: number | null;
+  reload?: {
+    status?: string;
+    active_model_path?: string | null;
+    error?: string;
+  } | null;
+  error?: string | null;
+  log_tail?: string | null;
 };
 
 export type SimulationRecord = {
@@ -37,7 +70,32 @@ export type SimulationRecord = {
 type HealthState = "unknown" | "healthy" | "down";
 
 const configuredApiBase = (import.meta.env.VITE_API_URL ?? "").trim();
+const configuredFallback = (import.meta.env.VITE_API_FALLBACK ?? "").trim();
+const inferredFallback =
+  typeof window !== "undefined" && window.location?.hostname
+    ? `${window.location.protocol}//${window.location.hostname}:5001`
+    : "http://127.0.0.1:5001";
+
 const API_BASE = configuredApiBase;
+const API_FALLBACK = configuredFallback || inferredFallback;
+
+async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
+  const primaryUrl = `${API_BASE}${path}`;
+  try {
+    const primary = await fetch(primaryUrl, init);
+    if (primary.ok || API_BASE || !API_FALLBACK || primaryUrl === `${API_FALLBACK}${path}`) {
+      return primary;
+    }
+
+    const fallback = await fetch(`${API_FALLBACK}${path}`, init);
+    return fallback;
+  } catch {
+    if (!API_FALLBACK || primaryUrl === `${API_FALLBACK}${path}`) {
+      throw new Error("Request failed");
+    }
+    return fetch(`${API_FALLBACK}${path}`, init);
+  }
+}
 
 function normalizeFieldState(data: unknown): AtlanteanFieldState | null {
   if (!data || typeof data !== "object") {
@@ -97,6 +155,7 @@ export function useAtlantean() {
   const [isLoading, setIsLoading] = useState(false);
   const [reply, setReply] = useState<BackendResponse | null>(null);
   const [fieldState, setFieldState] = useState<AtlanteanFieldState | null>(null);
+  const [sovereign, setSovereign] = useState<SovereignStatus | null>(null);
 
   const statusText = useMemo(() => {
     if (health === "healthy") return "Backend online";
@@ -106,7 +165,7 @@ export function useAtlantean() {
 
   const checkHealth = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/health`);
+      const res = await fetchApi("/health");
       setHealth(res.ok ? "healthy" : "down");
       return res.ok;
     } catch {
@@ -117,7 +176,7 @@ export function useAtlantean() {
 
   const refreshFields = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/atlantean/fields`);
+      const res = await fetchApi("/api/atlantean/fields");
       if (!res.ok) {
         return null;
       }
@@ -132,10 +191,26 @@ export function useAtlantean() {
     }
   }, []);
 
+  const refreshSovereignStatus = useCallback(async () => {
+    try {
+      const res = await fetchApi("/api/atlantean/status");
+      if (!res.ok) {
+        return null;
+      }
+      const data = (await res.json()) as { sovereign?: SovereignStatus };
+      if (data.sovereign) {
+        setSovereign(data.sovereign);
+      }
+      return data.sovereign ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const submitQuery = useCallback(async (input: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/atlantean/query`, {
+      const res = await fetchApi("/api/atlantean/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input }),
@@ -166,7 +241,7 @@ export function useAtlantean() {
       params.set("q", query);
     }
 
-    const res = await fetch(`${API_BASE}/api/atlantean/simulations?${params.toString()}`);
+    const res = await fetchApi(`/api/atlantean/simulations?${params.toString()}`);
     if (!res.ok) {
       throw new Error(`Simulation fetch failed (${res.status})`);
     }
@@ -176,6 +251,116 @@ export function useAtlantean() {
     return rows.map(normalizeSimulationRecord).filter((row): row is SimulationRecord => row !== null);
   }, []);
 
+  const sendFeedback = useCallback(
+    async (
+      event: "user_confirmation" | "user_negative_feedback" | "user_correction" | "high_engagement",
+      opts?: { intensity?: number; interactionId?: string; correction?: string },
+    ) => {
+      const res = await fetchApi("/api/atlantean/learning-event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event,
+          intensity: opts?.intensity ?? 0.6,
+          interaction_id: opts?.interactionId,
+          correction: opts?.correction,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Feedback failed (${res.status})`);
+      }
+      return (await res.json()) as {
+        status: string;
+        event: string;
+        new_field_state?: AtlanteanFieldState;
+      };
+    },
+    [],
+  );
+
+  const exportTrainingDataset = useCallback(
+    async (opts?: { limit?: number }) => {
+      const limit = Math.max(1, Math.min(5000, opts?.limit ?? 1000));
+      const params = new URLSearchParams({
+        limit: String(limit),
+      });
+
+      const res = await fetchApi(`/api/atlantean/training/export?${params.toString()}`);
+      if (!res.ok) {
+        throw new Error(`Training export failed (${res.status})`);
+      }
+
+      return (await res.json()) as {
+        count: number;
+        export_path: string | null;
+      };
+    },
+    [],
+  );
+
+  const launchTrainingJob = useCallback(
+    async (opts?: {
+      exportLimit?: number;
+      epochs?: number;
+      batchSize?: number;
+      seqLen?: number;
+      lr?: number;
+      maxRows?: number;
+      device?: string;
+      checkpointPath?: string;
+      outputPath?: string;
+      autoHotSwap?: boolean;
+    }) => {
+      const payload = {
+        export_limit: Math.max(10, Math.min(10000, opts?.exportLimit ?? 1500)),
+        epochs: Math.max(1, Math.min(20, opts?.epochs ?? 2)),
+        batch_size: Math.max(1, Math.min(64, opts?.batchSize ?? 8)),
+        seq_len: Math.max(16, Math.min(512, opts?.seqLen ?? 128)),
+        lr: opts?.lr ?? 3e-4,
+        max_rows: Math.max(0, Math.min(200000, opts?.maxRows ?? 0)),
+        device: opts?.device ?? "cpu",
+        checkpoint_path: opts?.checkpointPath,
+        output_path: opts?.outputPath,
+        auto_hot_swap: opts?.autoHotSwap ?? true,
+      };
+
+      const res = await fetchApi("/api/atlantean/training/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Training job launch failed (${res.status}): ${errText}`);
+      }
+
+      return (await res.json()) as { job_id: string; status: string };
+    },
+    [],
+  );
+
+  const getTrainingJob = useCallback(async (jobId: string) => {
+    const res = await fetchApi(`/api/atlantean/training/jobs/${encodeURIComponent(jobId)}`);
+    if (!res.ok) {
+      throw new Error(`Training job fetch failed (${res.status})`);
+    }
+    return (await res.json()) as TrainingJob;
+  }, []);
+
+  const reloadModel = useCallback(async (modelPath: string) => {
+    const res = await fetchApi("/api/atlantean/model/reload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_path: modelPath }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Model reload failed (${res.status}): ${errText}`);
+    }
+    return (await res.json()) as { status: string; active_model_path?: string };
+  }, []);
+
   return {
     apiBase: API_BASE,
     health,
@@ -183,9 +368,16 @@ export function useAtlantean() {
     isLoading,
     reply,
     fieldState,
+    sovereign,
     checkHealth,
     submitQuery,
+    sendFeedback,
     refreshFields,
+    refreshSovereignStatus,
     fetchSimulations,
+    exportTrainingDataset,
+    launchTrainingJob,
+    getTrainingJob,
+    reloadModel,
   };
 }

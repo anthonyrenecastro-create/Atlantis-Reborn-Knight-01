@@ -19,6 +19,8 @@ class GovernorConfig:
     rate_limit_per_minute: int = 60
     max_input_chars: int = 4000
     audit_buffer_size: int = 200
+    require_api_key: bool = False
+    api_key: str = ""
 
 
 class InMemoryRateLimiter:
@@ -107,18 +109,27 @@ def _build_blueprint(config: GovernorConfig, audit: AuditLogStore, limiter: InMe
 
     @bp.route("/dashboard", methods=["GET"])
     def governor_dashboard():
+        path_stats = sorted(REQUEST_COUNTER.items(), key=lambda kv: kv[1], reverse=True)[:10]
         return jsonify(
             {
                 "title": "Syntropy Governor Dashboard",
+                "status": "healthy",
                 "security": {
                     "rate_limiting": True,
                     "input_validation": True,
                     "security_headers": True,
                     "audit_logging": True,
+                    "api_key_auth": config.require_api_key,
+                },
+                "traffic": {
+                    "total_requests": sum(REQUEST_COUNTER.values()),
+                    "top_paths": [{"path": p, "count": c} for p, c in path_stats],
+                    "rate_limited_clients": len(limiter._buckets),
                 },
                 "endpoints": [
                     "/api/governor/status",
                     "/api/governor/audit?limit=50",
+                    "/api/governor/dashboard",
                     "/health",
                     "/api/atlantean/query",
                 ],
@@ -142,6 +153,26 @@ def _request_payload_size() -> int:
     return len(raw)
 
 
+def _is_protected_path(path: str) -> bool:
+    if not path.startswith("/api/"):
+        return False
+    if path.startswith("/api/governor"):
+        return False
+    if path in {"/api/atlantean/status", "/api/atlantean/fields", "/api/atlantean/simulations"}:
+        return False
+    return True
+
+
+def _extract_api_key() -> str:
+    key = request.headers.get("X-API-Key", "").strip()
+    if key:
+        return key
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
 def init_governor(app: Flask) -> None:
     """Attach governor middleware and monitoring endpoints to a Flask app."""
 
@@ -149,6 +180,8 @@ def init_governor(app: Flask) -> None:
         rate_limit_per_minute=int(os.getenv("GOVERNOR_RATE_LIMIT_PER_MINUTE", "60")),
         max_input_chars=int(os.getenv("GOVERNOR_MAX_INPUT_CHARS", "4000")),
         audit_buffer_size=int(os.getenv("GOVERNOR_AUDIT_BUFFER_SIZE", "200")),
+        require_api_key=os.getenv("GOVERNOR_REQUIRE_API_KEY", "false").lower() in {"1", "true", "yes"},
+        api_key=os.getenv("GOVERNOR_API_KEY", ""),
     )
     audit_path = os.getenv("GOVERNOR_AUDIT_LOG", os.path.join("governor", "audit.log"))
 
@@ -163,11 +196,34 @@ def init_governor(app: Flask) -> None:
 
         allow, retry_after = limiter.allow(_client_id())
         if not allow:
+            audit.append(
+                {
+                    "timestamp": time.time(),
+                    "event": "rate_limit_exceeded",
+                    "path": request.path,
+                    "method": request.method,
+                    "client": _client_id(),
+                }
+            )
             return (
                 jsonify({"error": "rate limit exceeded", "retry_after_seconds": retry_after}),
                 429,
                 {"Retry-After": str(retry_after)},
             )
+
+        if cfg.require_api_key and _is_protected_path(request.path):
+            provided = _extract_api_key()
+            if not cfg.api_key or provided != cfg.api_key:
+                audit.append(
+                    {
+                        "timestamp": time.time(),
+                        "event": "auth_failed",
+                        "path": request.path,
+                        "method": request.method,
+                        "client": _client_id(),
+                    }
+                )
+                return jsonify({"error": "unauthorized"}), 401
 
         if request.method in {"POST", "PUT", "PATCH"}:
             size_bytes = _request_payload_size()
@@ -180,6 +236,10 @@ def init_governor(app: Flask) -> None:
                 return jsonify({"error": "invalid JSON body"}), 400
 
             value = payload.get("input")
+            if value is None:
+                value = payload.get("prompt")
+            if value is None:
+                value = payload.get("message")
             if not isinstance(value, str):
                 return jsonify({"error": "input must be a string"}), 400
 
@@ -188,6 +248,44 @@ def init_governor(app: Flask) -> None:
 
             if len(value) > cfg.max_input_chars:
                 return jsonify({"error": f"input too long (max {cfg.max_input_chars})"}), 400
+
+            # Normalize payload shape for downstream handlers.
+            payload["input"] = value
+
+        if request.path == "/api/atlantean/learning-event" and request.method == "POST":
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({"error": "invalid JSON body"}), 400
+
+            event = payload.get("event")
+            if not isinstance(event, str) or not event.strip():
+                return jsonify({"error": "event must be a non-empty string"}), 400
+
+            allowed_events = {
+                "user_confirmation",
+                "user_negative_feedback",
+                "user_correction",
+                "high_engagement",
+                "simulation_complete",
+                "voice_session_end",
+            }
+            if event not in allowed_events:
+                return jsonify({"error": f"unsupported event '{event}'"}), 400
+
+            intensity = payload.get("intensity", 0.5)
+            if not isinstance(intensity, (int, float)):
+                return jsonify({"error": "intensity must be numeric"}), 400
+            if intensity < -2 or intensity > 2:
+                return jsonify({"error": "intensity must be between -2 and 2"}), 400
+
+        if request.path == "/api/atlantean/simulations" and request.method == "GET":
+            limit_raw = request.args.get("limit", "100")
+            try:
+                limit = int(limit_raw)
+            except ValueError:
+                return jsonify({"error": "limit must be an integer"}), 400
+            if limit < 1 or limit > 500:
+                return jsonify({"error": "limit must be between 1 and 500"}), 400
 
     @app.after_request
     def governor_after_request(response):
@@ -216,4 +314,9 @@ def init_governor(app: Flask) -> None:
         return response
 
     app.register_blueprint(_build_blueprint(cfg, audit, limiter))
-    logger.info("Governor initialized (rate_limit=%s/min, max_input_chars=%s)", cfg.rate_limit_per_minute, cfg.max_input_chars)
+    logger.info(
+        "Governor initialized (rate_limit=%s/min, max_input_chars=%s, api_key_auth=%s)",
+        cfg.rate_limit_per_minute,
+        cfg.max_input_chars,
+        cfg.require_api_key,
+    )
