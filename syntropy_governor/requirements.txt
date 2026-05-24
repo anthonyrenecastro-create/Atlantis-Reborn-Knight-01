@@ -7,3 +7,5 @@ cryptography
 requests
 python-dotenv
 datasets
+redis
+google-genai

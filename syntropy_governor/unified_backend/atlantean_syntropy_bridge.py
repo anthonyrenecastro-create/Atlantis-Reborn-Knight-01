@@ -29,16 +29,26 @@ import json
 import re
 from collections import deque
 
+try:
+    from google import genai
+except Exception:
+    genai = None
+
 # Add paths for the three systems
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE_DIR / "core_brain"))
 sys.path.insert(0, str(BASE_DIR / "governor"))
+sys.path.insert(0, str(BASE_DIR / "consciousness"))
 sys.path.insert(0, str(BASE_DIR / "consciousness/atlantean_core"))
 
 from syntropy_field_expanded import AdvancedTextGenerationNN, OscillatorySynapseTheory
 from hot_memory import AtlanteanHotMemory
 from learning import apply_learning_signal, apply_contradiction_signal, compute_learning_capacity
-# from atlantean_quadra_bridge import AtlanteanQuadraBridge  # Will be adapted
+
+try:
+    from atlantean_quadra_bridge import AtlanteanQuadraBridge
+except Exception:
+    AtlanteanQuadraBridge = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SyntropyGovernorBridge")
@@ -82,6 +92,8 @@ class AtlanteanSyntropyBridge:
             "queries_total": 0,
             "local_calls": 0,
             "fallback_calls": 0,
+            "gemini_calls": 0,
+            "gemini_failures": 0,
             "positive_feedback": 0,
             "negative_feedback": 0,
             "correction_feedback": 0,
@@ -94,11 +106,250 @@ class AtlanteanSyntropyBridge:
             )
         )
 
+        self.pipeline_architecture = [
+            "core_brain:shakespeare_model",
+            "governor:cognitive_wrapper",
+            "atlantean_bridge:field_funnel",
+            "quadra_seer:final_output_integration",
+        ]
+        self.require_quadra_final = os.getenv("SYNTROPY_REQUIRE_QUADRA_FINAL", "true").strip().lower() != "false"
+        self.quadra_local_log_path = Path(
+            os.getenv(
+                "ATLANTEAN_QUADRA_LOCAL_LOG_PATH",
+                str(BASE_DIR / "unified_backend" / "quadra_final_output.jsonl"),
+            )
+        )
+        self.quadra_bridge = self._init_quadra_seer_bridge()
+
+        # Optional Gemini mediator: Atlantean bridge remains the only caller,
+        # so API outputs are always grounded in field-state + local cognition.
+        self.gemini_api_key = self._resolve_gemini_api_key()
+        self.gemini_model = (
+            os.getenv("GEMINI_MODEL")
+            or os.getenv("ATLANTEAN_GEMINI_MODEL")
+            or "gemini-2.5-flash"
+        ).strip()
+        self.gemini_client = None
+        self._init_gemini_client()
+
         # === 3. Field State Encoder (maps Atlantean → Syntropy field_state) ===
         self.field_state_dim = self._infer_field_state_dim()
         self.field_encoder = nn.Linear(3, self.field_state_dim).to(self.device)
 
         logger.info("✅ Atlantean + Syntropy Bridge initialized successfully")
+
+    def _resolve_gemini_api_key(self) -> str:
+        direct = (
+            os.getenv("GEMINI_API_KEY")
+            or os.getenv("VITE_GEMINI_API_KEY")
+            or ""
+        ).strip()
+        if direct:
+            return direct
+
+        # Compatibility fallback: reuse key from setup doc if user has not
+        # created .env files yet.
+        setup_doc = BASE_DIR / "consciousness" / "SETUP_API_KEY.md"
+        if setup_doc.exists():
+            try:
+                content = setup_doc.read_text(encoding="utf-8")
+                m = re.search(r"^GEMINI_API_KEY\s*=\s*([^\s#]+)", content, flags=re.MULTILINE)
+                if m:
+                    return m.group(1).strip()
+            except Exception:
+                pass
+        return ""
+
+    def _init_gemini_client(self):
+        if not self.gemini_api_key:
+            logger.info("Gemini mediator disabled: no GEMINI_API_KEY configured.")
+            self.gemini_client = None
+            return
+        if genai is None:
+            logger.warning("Gemini mediator disabled: google-genai package not available.")
+            self.gemini_client = None
+            return
+        try:
+            self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+            logger.info(f"✅ Gemini mediator configured (model={self.gemini_model})")
+        except Exception as exc:
+            logger.warning(f"Gemini mediator init failed; continuing local-only. Reason: {exc}")
+            self.gemini_client = None
+
+    def _gemini_ready(self) -> bool:
+        return self.gemini_client is not None
+
+    def _build_gemini_mediator_prompt(
+        self,
+        user_input: str,
+        local_response: str,
+        decision_output: Dict[str, Any],
+        field_snapshot: Dict[str, float],
+    ) -> str:
+        compact_decision = {
+            "intent": decision_output.get("intent"),
+            "next_action": decision_output.get("next_action"),
+            "selected_option": decision_output.get("selected_option"),
+            "state_estimate": decision_output.get("state_estimate"),
+            "expected_signal": decision_output.get("expected_signal"),
+            "guardrails": decision_output.get("guardrails"),
+            "influences": decision_output.get("influences"),
+        }
+        return (
+            "You are Gemini acting as a synthesis layer for Atlantean-Syntropy cognition.\n"
+            "Non-negotiable constraints:\n"
+            "1) Keep response directly useful, plain, and non-generic.\n"
+            "2) Preserve intent from the supplied decision object.\n"
+            "3) Do not expose internal chain-of-thought.\n"
+            "4) Prefer concrete next-step guidance when applicable.\n\n"
+            f"User input:\n{user_input}\n\n"
+            f"Atlantean field snapshot:\n{json.dumps(field_snapshot, ensure_ascii=True)}\n\n"
+            f"Decision object (authoritative):\n{json.dumps(compact_decision, ensure_ascii=True)}\n\n"
+            f"Local draft from core brain:\n{local_response}\n\n"
+            "Produce a final response for the user."
+        )
+
+    def _call_gemini_mediator(
+        self,
+        user_input: str,
+        local_response: str,
+        decision_output: Dict[str, Any],
+        field_snapshot: Dict[str, float],
+        api_key_override: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        if genai is None:
+            return None, "google-genai package unavailable", None
+
+        client = self.gemini_client
+        if api_key_override and api_key_override.strip():
+            try:
+                client = genai.Client(api_key=api_key_override.strip())
+            except Exception as exc:
+                return None, f"invalid override API key: {exc}", None
+
+        if client is None:
+            return None, "gemini not configured", None
+
+        model_name = (model_override or self.gemini_model or "gemini-2.5-flash").strip()
+        prompt = self._build_gemini_mediator_prompt(
+            user_input=user_input,
+            local_response=local_response,
+            decision_output=decision_output,
+            field_snapshot=field_snapshot,
+        )
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            text = (getattr(response, "text", "") or "").strip()
+            if not text:
+                return None, "empty response from gemini", model_name
+            return text, None, model_name
+        except Exception as exc:
+            return None, str(exc), model_name
+
+    def _init_quadra_seer_bridge(self):
+        if AtlanteanQuadraBridge is None:
+            if self.require_quadra_final:
+                raise RuntimeError("Quadra-Seer bridge import failed. Install required dependencies to enable final integration.")
+            return None
+        try:
+            return AtlanteanQuadraBridge(enable_crypto=False, device_id="syntropy-governor")
+        except Exception as exc:
+            if self.require_quadra_final:
+                raise RuntimeError(f"Quadra-Seer bridge initialization failed: {exc}")
+            logger.warning(f"Quadra-Seer integration unavailable; continuing without it. Reason: {exc}")
+            return None
+
+    def _quadra_local_finalize(self, user_input: str, response_text: str, interaction_id: str, error: str = "") -> Dict[str, Any]:
+        self.quadra_local_log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "interaction_id": interaction_id,
+            "timestamp": time.time(),
+            "source": "unified_backend",
+            "user_input": user_input,
+            "response": response_text,
+            "error": error,
+            "finalizer": "quadra_local_ledger",
+        }
+        with self.quadra_local_log_path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+        return {
+            "enabled": True,
+            "status": "applied_local",
+            "session_id": interaction_id,
+            "local_log_path": str(self.quadra_local_log_path),
+        }
+
+    def _governor_cognitive_wrapper(self, user_input: str) -> tuple[str, Dict[str, Any]]:
+        raw = (user_input or "").strip()
+        normalized = re.sub(r"\s+", " ", raw)
+        intent = self._infer_intent(normalized)
+
+        wrapped = (
+            f"[governor-wrapper intent={intent} policy=answer-first no-internal-narration] "
+            f"{normalized}"
+        ).strip()
+
+        return wrapped, {
+            "enabled": True,
+            "intent": intent,
+            "answer_first": True,
+            "internal_process_hidden": True,
+            "input_chars": len(normalized),
+        }
+
+    def _quadra_finalize_output(
+        self,
+        user_input: str,
+        response_text: str,
+        interaction_id: str,
+    ) -> Dict[str, Any]:
+        if self.quadra_bridge is None:
+            if self.require_quadra_final:
+                return self._quadra_local_finalize(
+                    user_input=user_input,
+                    response_text=response_text,
+                    interaction_id=interaction_id,
+                    error="quadra_bridge_unavailable",
+                )
+            return {
+                "enabled": False,
+                "status": "unavailable",
+            }
+
+        try:
+            session_id = interaction_id
+            self.quadra_bridge.store_chat_turn(
+                role="user",
+                content=user_input,
+                session_id=session_id,
+                domain="unified_backend",
+                relevance=0.65,
+            )
+            self.quadra_bridge.store_chat_turn(
+                role="assistant",
+                content=response_text,
+                session_id=session_id,
+                domain="unified_backend",
+                relevance=0.62,
+            )
+            return {
+                "enabled": True,
+                "status": "applied",
+                "session_id": session_id,
+            }
+        except Exception as exc:
+            logger.warning(f"Quadra-Seer finalization failed; switching to local finalization ledger. Reason: {exc}")
+            return self._quadra_local_finalize(
+                user_input=user_input,
+                response_text=response_text,
+                interaction_id=interaction_id,
+                error=str(exc),
+            )
 
     def _load_or_initialize_hot_memory(self) -> AtlanteanHotMemory:
         """Load persistent Atlantean hot memory if present, otherwise initialize fresh state."""
@@ -1186,6 +1437,33 @@ class AtlanteanSyntropyBridge:
             ]
         )
 
+    @staticmethod
+    def _strip_process_framing(text: str) -> str:
+        candidate = (text or "").strip()
+        if not candidate:
+            return candidate
+
+        # Remove explicit internal-process headings and keep direct answer content.
+        candidate = re.sub(r"^\s*Thinking\s+steps:\s*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"^\s*Interpretation:\s*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"^\s*Decision:\s*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\n\s*Decision:\s*", "\n", candidate, flags=re.IGNORECASE)
+
+        # Remove line-by-line synthetic reasoning traces when present.
+        cleaned_lines = []
+        for line in candidate.splitlines():
+            ln = line.strip()
+            if re.match(r"^\d+\.\s*phi_shift\s*=", ln, flags=re.IGNORECASE):
+                continue
+            if ln.lower() in {"thinking steps:", "interpretation:", "decision:"}:
+                continue
+            cleaned_lines.append(line)
+
+        candidate = "\n".join(cleaned_lines).strip()
+        # Collapse large blank spans introduced by removals.
+        candidate = re.sub(r"\n{3,}", "\n\n", candidate)
+        return candidate.strip()
+
     def _unify_output(
         self,
         user_input: str,
@@ -1271,6 +1549,9 @@ class AtlanteanSyntropyBridge:
         user_input: str,
         temperature: float = 0.85,
         max_tokens: int = 120,
+        llm_provider: str = "auto",
+        api_key_override: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Main entry point for the Consciousness UI.
@@ -1278,11 +1559,23 @@ class AtlanteanSyntropyBridge:
         """
         start_time = time.time()
 
+        pipeline_meta: Dict[str, Any] = {
+            "architecture": list(self.pipeline_architecture),
+            "stages": {},
+        }
+
+        wrapped_input, wrapper_meta = self._governor_cognitive_wrapper(user_input)
+        pipeline_meta["stages"]["governor:cognitive_wrapper"] = wrapper_meta
+        pipeline_meta["stages"]["core_brain:shakespeare_model"] = {
+            "model_path": self.active_model_path,
+            "model_class": "AdvancedTextGenerationNN",
+        }
+
         # 1. Encode input
         if not self.stoi:
             return {"response": "Syntropy core not loaded.", "error": True}
 
-        input_ids = [self.stoi.get(c, 0) for c in user_input[-64:]]  # last 64 chars
+        input_ids = [self.stoi.get(c, 0) for c in wrapped_input[-64:]]  # last 64 chars
         if not input_ids:
             input_ids = [1]  # fallback
 
@@ -1336,10 +1629,15 @@ class AtlanteanSyntropyBridge:
                     "Phi": snapshot["Phi"],
                 },
             )
-            mode = "field_modulated_clean" if fallback_reason != "generation_error" else "fallback_recovery"
+            # Treat all local fallback paths as fallback mode so the unifier
+            # performs structured regeneration instead of passing through
+            # canned fallback phrasing.
+            mode = "field_modulated_fallback" if fallback_reason != "generation_error" else "fallback_recovery"
             self.sovereign_stats["fallback_calls"] += 1
         else:
             mode = "field_modulated_syntropy"
+            if fallback_reason not in {"none", "clear_intent_override"}:
+                fallback_reason = "none"
 
         # 3b. Final unifying stage: all outputs pass through one synthesis processor
         # before returning to the client.
@@ -1350,11 +1648,61 @@ class AtlanteanSyntropyBridge:
             fallback_reason=fallback_reason,
         )
 
+        local_decision_text = text
+        provider_request = (llm_provider or "auto").strip().lower()
+        if provider_request not in {"auto", "local", "gemini"}:
+            provider_request = "auto"
+
+        gemini_attempted = False
+        gemini_used = False
+        gemini_error = None
+        gemini_model_used = None
+
+        can_try_gemini = provider_request in {"auto", "gemini"}
+        if can_try_gemini:
+            gemini_attempted = True
+            mediated_text, gemini_error, gemini_model_used = self._call_gemini_mediator(
+                user_input=user_input,
+                local_response=local_decision_text,
+                decision_output=decision_output,
+                field_snapshot=self._field_snapshot(),
+                api_key_override=api_key_override,
+                model_override=model_override,
+            )
+            if mediated_text:
+                text = mediated_text
+                mode = "hybrid_gemini_mediated"
+                gemini_used = True
+                fallback_reason = "none"
+                self.sovereign_stats["gemini_calls"] += 1
+            elif provider_request == "gemini":
+                # Explicit provider request should still return a usable response.
+                mode = "gemini_requested_local_fallback"
+                self.sovereign_stats["gemini_failures"] += 1
+            elif gemini_error:
+                self.sovereign_stats["gemini_failures"] += 1
+
+        # Enforce answer-first output unless the user explicitly asks for process transparency.
+        if not self._wants_process_transparency(user_input):
+            text = self._strip_process_framing(text)
+        pipeline_meta["stages"]["atlantean_bridge:field_funnel"] = {
+            "mode": mode,
+            "fallback_used": bool(fallback_used),
+            "fallback_reason": fallback_reason,
+            "unifier_decision": unifier_meta.get("decision"),
+        }
+
         self.sovereign_stats["local_calls"] += 1
         self.sovereign_stats["queries_total"] += 1
 
-        # 4. Update Atlantean fields (simple learning signal)
-        self._apply_learning_signal(0.1)
+        # 4. Update Atlantean fields. Gemini-mediated output acts as a teacher signal
+        # for online adaptation while preserving local autonomy.
+        learning_strength = 0.1
+        mentor_alignment = None
+        if gemini_used:
+            mentor_alignment = self._text_similarity(local_decision_text, text)
+            learning_strength = 0.14 + (0.2 * mentor_alignment)
+        self._apply_learning_signal(min(0.35, learning_strength))
 
         latency = (time.time() - start_time) * 1000
 
@@ -1364,6 +1712,13 @@ class AtlanteanSyntropyBridge:
             source="local",
             mode=mode,
         )
+
+        quadra_meta = self._quadra_finalize_output(
+            user_input=user_input,
+            response_text=text.strip(),
+            interaction_id=interaction_id,
+        )
+        pipeline_meta["stages"]["quadra_seer:final_output_integration"] = quadra_meta
 
         snapshot = self._field_snapshot()
         result = {
@@ -1383,16 +1738,34 @@ class AtlanteanSyntropyBridge:
                 "mode": mode,
                 "warning": generation_error,
                 "sovereign": {
-                    "local_only": True,
+                    "local_only": not gemini_used,
                     "local_quality": round(local_quality, 4),
                     "local_quality_min": round(self._quality_min_threshold(), 4),
                     "intent_confidence": round(intent_confidence, 4),
                     "clear_intent_min": round(self._clear_intent_threshold(), 4),
                     "fallback_reason": fallback_reason,
-                    "fallback_used": mode in {"field_modulated_fallback", "fallback_recovery"},
+                    "fallback_used": bool(fallback_used),
+                    "learning_strength": round(min(0.35, learning_strength), 4),
+                },
+                "llm_mediator": {
+                    "provider_requested": provider_request,
+                    "gemini_attempted": gemini_attempted,
+                    "gemini_used": gemini_used,
+                    "model": gemini_model_used,
+                    "error": gemini_error,
+                    "mentor_alignment": None if mentor_alignment is None else round(float(mentor_alignment), 4),
                 },
                 "unifier": unifier_meta,
+                "pipeline": pipeline_meta,
             }
+        }
+
+        pipeline_meta["stages"]["api:gemini_mediator"] = {
+            "requested": provider_request,
+            "attempted": gemini_attempted,
+            "used": gemini_used,
+            "model": gemini_model_used,
+            "error": gemini_error,
         }
 
         # Persist interaction in cold memory log for sovereign offline training.
@@ -1402,8 +1775,9 @@ class AtlanteanSyntropyBridge:
                 "timestamp": time.time(),
                 "prompt": user_input,
                 "response": result["response"],
-                "source": "local",
+                "source": "gemini" if gemini_used else "local",
                 "mode": mode,
+                "local_draft": local_decision_text,
                 "field_state": result["field_state"],
                 "metadata": result["metadata"],
             }
@@ -1510,6 +1884,7 @@ class AtlanteanSyntropyBridge:
 
     def get_status(self) -> Dict[str, Any]:
         snapshot = self._field_snapshot()
+        gemini_ready = self._gemini_ready()
         return {
             "status": "healthy",
             "core_brain": "Syntropy AdvancedTextGenerationNN",
@@ -1522,10 +1897,14 @@ class AtlanteanSyntropyBridge:
             "version": self.hot_memory.version,
             "device": str(self.device),
             "sovereign": {
-                "local_only": True,
+                "local_only": not gemini_ready,
                 "stats": dict(self.sovereign_stats),
                 "training_export_path": str(self.cold_memory_log_path),
                 "active_model_path": self.active_model_path,
+            },
+            "llm_mediator": {
+                "gemini_configured": gemini_ready,
+                "gemini_model": self.gemini_model,
             },
         }
 

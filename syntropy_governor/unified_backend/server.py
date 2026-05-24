@@ -12,8 +12,7 @@ Endpoints:
 - GET  /api/atlantean/fields
 - GET  /api/atlantean/simulations
 
-This replaces the old Gemini-dependent backend.
-Fully local. No external APIs.
+Unified backend for local Syntropy cognition with optional Gemini mediation.
 """
 
 from flask import Flask, request, jsonify
@@ -26,9 +25,14 @@ import time
 import threading
 import subprocess
 import uuid
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE_DIR))
+
+# Load environment for unified runtime (project root and consciousness UI env).
+load_dotenv(BASE_DIR / ".env.local")
+load_dotenv(BASE_DIR / "consciousness" / ".env.local")
 
 from governor import init_governor
 
@@ -217,9 +221,17 @@ def query():
     if not isinstance(user_input, str):
         user_input = str(user_input or "")
     user_input = user_input.strip() or "Hello"
+    llm_provider = str(data.get("llm_provider", "auto") or "auto")
+    api_key_override = data.get("api_key")
+    model_override = data.get("model")
     
     try:
-        result = b.query(user_input)
+        result = b.query(
+            user_input,
+            llm_provider=llm_provider,
+            api_key_override=api_key_override,
+            model_override=model_override,
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Query error: {e}")
