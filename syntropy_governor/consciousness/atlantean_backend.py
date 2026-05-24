@@ -4,6 +4,11 @@ Atlantean Backend Server
 HTTP server that exposes Atlantean Intelligence Core to the Quadra-Seer frontend.
 This is the Phase 1 integration - a standalone backend that Quadra-Seer can call.
 
+LEGACY NOTICE:
+- This file is retained for historical reference and compatibility experiments.
+- Canonical runtime backend for this repository is `unified_backend/server.py`.
+- Preferred startup path is `./scripts/start_unified.sh` from repository root.
+
 Run with: python atlantean_backend.py
 """
 

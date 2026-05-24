@@ -1,4 +1,12 @@
-export type WindowType = "CHAT" | "IMAGE_GENERATOR" | "VIDEO_GENERATOR" | "BROWSER" | "DOCUMENT_VIEWER";
+export type WindowType =
+  | "CHAT"
+  | "UNIFIED_CHAT"
+  | "FIELD_PANEL"
+  | "TRAINING_DASHBOARD"
+  | "IMAGE_GENERATOR"
+  | "VIDEO_GENERATOR"
+  | "BROWSER"
+  | "DOCUMENT_VIEWER";
 
 export interface BaseWindow {
   id: number;
@@ -18,6 +26,18 @@ export interface ImageGeneratorWindow extends BaseWindow {
   initialPrompt?: string;
 }
 
+export interface UnifiedChatWindow extends BaseWindow {
+  type: "UNIFIED_CHAT";
+}
+
+export interface FieldPanelWindow extends BaseWindow {
+  type: "FIELD_PANEL";
+}
+
+export interface TrainingDashboardWindow extends BaseWindow {
+  type: "TRAINING_DASHBOARD";
+}
+
 export interface VideoGeneratorWindow extends BaseWindow {
   type: "VIDEO_GENERATOR";
   initialPrompt?: string;
@@ -35,6 +55,9 @@ export interface DocumentViewerWindow extends BaseWindow {
 
 export type WindowInstance =
   | ChatWindow
+  | UnifiedChatWindow
+  | FieldPanelWindow
+  | TrainingDashboardWindow
   | ImageGeneratorWindow
   | VideoGeneratorWindow
   | BrowserWindow

@@ -4,20 +4,84 @@ export type BackendResponse = {
   interaction_id?: string;
   response?: string;
   error?: string | boolean;
+  decision_output?: {
+    schema_version?: string;
+    intent?: string;
+    state_estimate?: Record<string, unknown> | string;
+    hypothesis?: string;
+    next_action?: string;
+    expected_signal?: string;
+    selected_option?: string;
+    options?: Array<{
+      id?: string;
+      action?: string;
+      confidence?: number;
+      rationale?: string;
+      risk?: string;
+      evidence_needed?: string[];
+    }>;
+    guardrails?: string[];
+    memory_trace?: {
+      used_learned_hint?: boolean;
+      learned_hint?: string | null;
+      profile?: {
+        match_count?: number;
+        preferences?: string[];
+        recurring_topics?: string[];
+      };
+    };
+    influences?: {
+      field?: {
+        weight?: number;
+        lens?: string;
+        depth_bias?: number;
+        semantic_delta?: number;
+      };
+      memory?: {
+        weight?: number;
+        grounding_line_applied?: boolean;
+      };
+    };
+  };
   metadata?: {
     mode?: string;
     latency_ms?: number;
     warning?: string | null;
+    llm_mediator?: {
+      provider_requested?: string;
+      verbosity?: "high" | "normal" | "brief";
+      gemini_attempted?: boolean;
+      gemini_used?: boolean;
+      model?: string | null;
+      error?: string | null;
+      mentor_alignment?: number | null;
+    };
     sovereign?: {
       local_only?: boolean;
       local_quality?: number;
+      local_quality_min?: number;
+      intent_confidence?: number;
+      clear_intent_min?: number;
+      fallback_reason?: string;
       fallback_used?: boolean;
+      learning_strength?: number;
+    };
+    pipeline?: {
+      stages?: Record<string, {
+        enabled?: boolean;
+        status?: string;
+        session_id?: string;
+        error?: string;
+        finalizer?: string;
+        local_log_path?: string;
+      }>;
     };
   };
   field_state?: {
     phi1_mean?: number;
     phi5_mean?: number;
     Phi?: number;
+    learning_capacity?: number;
   };
 };
 
@@ -54,6 +118,17 @@ export type TrainingJob = {
   log_tail?: string | null;
 };
 
+export type ModelSwapEvent = {
+  id: string;
+  timestamp: number;
+  source?: string | null;
+  job_id?: string | null;
+  model_path?: string | null;
+  status: "success" | "failed";
+  active_model_path?: string | null;
+  error?: string | null;
+};
+
 export type SimulationRecord = {
   id: string;
   timestamp: number;
@@ -66,6 +141,8 @@ export type SimulationRecord = {
   field_state: AtlanteanFieldState;
   version: number;
 };
+
+export type ResponseVerbosity = "high" | "normal" | "brief";
 
 type HealthState = "unknown" | "healthy" | "down";
 
@@ -207,13 +284,14 @@ export function useAtlantean() {
     }
   }, []);
 
-  const submitQuery = useCallback(async (input: string) => {
+  const submitQuery = useCallback(async (input: string, opts?: { verbosity?: ResponseVerbosity }) => {
     setIsLoading(true);
     try {
+      const verbosity = opts?.verbosity ?? "normal";
       const res = await fetchApi("/api/atlantean/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input, verbosity }),
       });
       const data = (await res.json()) as BackendResponse;
       setReply(data);
@@ -348,6 +426,15 @@ export function useAtlantean() {
     return (await res.json()) as TrainingJob;
   }, []);
 
+  const listTrainingJobs = useCallback(async () => {
+    const res = await fetchApi("/api/atlantean/training/jobs");
+    if (!res.ok) {
+      throw new Error(`Training jobs list failed (${res.status})`);
+    }
+    const data = (await res.json()) as { jobs?: TrainingJob[] };
+    return Array.isArray(data.jobs) ? data.jobs : [];
+  }, []);
+
   const reloadModel = useCallback(async (modelPath: string) => {
     const res = await fetchApi("/api/atlantean/model/reload", {
       method: "POST",
@@ -359,6 +446,15 @@ export function useAtlantean() {
       throw new Error(`Model reload failed (${res.status}): ${errText}`);
     }
     return (await res.json()) as { status: string; active_model_path?: string };
+  }, []);
+
+  const listModelSwapHistory = useCallback(async (limit = 30) => {
+    const res = await fetchApi(`/api/atlantean/model/reload/history?limit=${encodeURIComponent(String(limit))}`);
+    if (!res.ok) {
+      throw new Error(`Model swap history fetch failed (${res.status})`);
+    }
+    const data = (await res.json()) as { events?: ModelSwapEvent[] };
+    return Array.isArray(data.events) ? data.events : [];
   }, []);
 
   return {
@@ -378,6 +474,8 @@ export function useAtlantean() {
     exportTrainingDataset,
     launchTrainingJob,
     getTrainingJob,
+    listTrainingJobs,
     reloadModel,
+    listModelSwapHistory,
   };
 }

@@ -20,6 +20,7 @@ from flask_cors import CORS
 import logging
 import sys
 from pathlib import Path
+import json
 from atlantean_syntropy_bridge import AtlanteanSyntropyBridge
 import time
 import threading
@@ -49,6 +50,10 @@ training_jobs = {}
 training_jobs_lock = threading.Lock()
 active_training_job_id = None
 MAX_TRAINING_JOBS = 25
+MODEL_SWAP_HISTORY_PATH = BASE_DIR / "unified_backend" / "model_swap_history.jsonl"
+model_swap_history = []
+model_swap_history_lock = threading.Lock()
+MAX_MODEL_SWAP_HISTORY = 200
 
 def get_bridge():
     global bridge
@@ -76,6 +81,83 @@ def _resolve_path(raw_path: str, fallback: Path) -> Path:
     if candidate.is_absolute():
         return candidate
     return (BASE_DIR / candidate).resolve()
+
+
+def _load_model_swap_history():
+    if not MODEL_SWAP_HISTORY_PATH.exists():
+        return
+
+    loaded = []
+    try:
+        with MODEL_SWAP_HISTORY_PATH.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if isinstance(entry, dict):
+                        loaded.append(entry)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as exc:
+        logger.warning(f"Could not load model swap history: {exc}")
+        return
+
+    if loaded:
+        loaded.sort(key=lambda item: item.get("timestamp", 0.0), reverse=True)
+        with model_swap_history_lock:
+            model_swap_history.clear()
+            model_swap_history.extend(loaded[:MAX_MODEL_SWAP_HISTORY])
+
+
+def _persist_model_swap_history():
+    MODEL_SWAP_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with MODEL_SWAP_HISTORY_PATH.open("w", encoding="utf-8") as handle:
+        with model_swap_history_lock:
+            rows = list(model_swap_history)
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=True) + "\n")
+
+
+def _record_model_swap_event(
+    *,
+    source: str,
+    model_path: str,
+    result: dict,
+    job_id: str | None = None,
+):
+    event = {
+        "id": f"swap_{uuid.uuid4().hex[:12]}",
+        "timestamp": _now(),
+        "source": source,
+        "job_id": job_id,
+        "model_path": model_path,
+        "status": "success" if result.get("status") == "reloaded" else "failed",
+        "active_model_path": result.get("active_model_path"),
+        "error": result.get("error"),
+    }
+
+    with model_swap_history_lock:
+        model_swap_history.insert(0, event)
+        del model_swap_history[MAX_MODEL_SWAP_HISTORY:]
+
+    try:
+        _persist_model_swap_history()
+    except Exception as exc:
+        logger.warning(f"Could not persist model swap history: {exc}")
+
+
+def _reload_model_with_audit(
+    b: AtlanteanSyntropyBridge,
+    *,
+    model_path: str,
+    source: str,
+    job_id: str | None = None,
+) -> dict:
+    result = b.reload_model(model_path)
+    _record_model_swap_event(source=source, model_path=model_path, result=result, job_id=job_id)
+    return result
 
 
 def _run_training_job(job_id: str):
@@ -168,7 +250,12 @@ def _run_training_job(job_id: str):
             "active_model_path": b.active_model_path,
         }
         if params.get("auto_hot_swap", True):
-            reload_result = b.reload_model(str(output_path))
+            reload_result = _reload_model_with_audit(
+                b,
+                model_path=str(output_path),
+                source="training_auto_hot_swap",
+                job_id=job_id,
+            )
             if reload_result.get("status") != "reloaded":
                 raise RuntimeError(
                     f"Training succeeded, but hot-swap failed: {reload_result.get('error', 'unknown error')}"
@@ -222,6 +309,9 @@ def query():
         user_input = str(user_input or "")
     user_input = user_input.strip() or "Hello"
     llm_provider = str(data.get("llm_provider", "auto") or "auto")
+    verbosity = str(data.get("verbosity", "normal") or "normal").strip().lower()
+    if verbosity not in {"high", "normal", "brief"}:
+        verbosity = "normal"
     api_key_override = data.get("api_key")
     model_override = data.get("model")
     
@@ -229,6 +319,7 @@ def query():
         result = b.query(
             user_input,
             llm_provider=llm_provider,
+            verbosity=verbosity,
             api_key_override=api_key_override,
             model_override=model_override,
         )
@@ -383,10 +474,30 @@ def model_reload():
     if not isinstance(model_path, str) or not model_path.strip():
         return jsonify({"error": "model_path is required."}), 400
 
-    result = b.reload_model(model_path)
+    result = _reload_model_with_audit(
+        b,
+        model_path=model_path,
+        source="manual_reload",
+    )
     if result.get("status") != "reloaded":
         return jsonify(result), 500
     return jsonify(result)
+
+
+@app.route("/api/atlantean/model/reload/history")
+def model_reload_history():
+    limit_raw = request.args.get("limit", "30")
+    try:
+        limit = max(1, min(200, int(limit_raw)))
+    except ValueError:
+        return jsonify({"error": "limit must be an integer"}), 400
+
+    with model_swap_history_lock:
+        rows = list(model_swap_history[:limit])
+    return jsonify({"events": rows, "count": len(rows)})
+
+
+_load_model_swap_history()
 
 if __name__ == "__main__":
     print("🚀 Starting Syntropy Governor Unified Backend on port 5001...")

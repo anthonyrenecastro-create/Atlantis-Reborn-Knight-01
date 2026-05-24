@@ -1,8 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { INITIAL_TASKS, generateChartData } from "./constants";
 import { ChatMessage, FeedItem, FeedItemType, Screen, WindowInstance, WindowType } from "./types";
+import ChatInterface from "./components/ChatInterface";
+import NeuralArchives from "./components/NeuralArchives";
+import TrainingDashboard from "./components/TrainingDashboard";
 
 type ChatMode = "GENERAL" | "PHYSICS" | "COMPONENT_REPORT";
+type ResponseVerbosity = "high" | "normal" | "brief";
 
 type AtlanteanStatus = {
   field_state?: {
@@ -181,65 +185,42 @@ const useVoiceRecognition = ({ onResult }: { onResult: (transcript: string) => v
 
 const AuraAvatar: React.FC = () => <div className="aura-avatar" aria-label="Aura avatar" />;
 
-type FloatingWindowProps = {
+type TiledPanelProps = {
   win: WindowInstance;
   onClose: (id: number) => void;
-  onFocus: (id: number) => void;
-  onDrag: (id: number, position: { x: number; y: number }) => void;
+  onToggleCollapse: (id: number) => void;
+  onToggleExpand: (id: number) => void;
+  isCollapsed: boolean;
+  isExpanded: boolean;
   children: React.ReactNode;
 };
 
-const FloatingWindow: React.FC<FloatingWindowProps> = ({ win, onClose, onFocus, onDrag, children }) => {
-  const draggingRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
-
-  const onMouseMove = useCallback(
-    (event: MouseEvent) => {
-      if (!draggingRef.current) {
-        return;
-      }
-      onDrag(win.id, {
-        x: event.clientX - draggingRef.current.offsetX,
-        y: event.clientY - draggingRef.current.offsetY,
-      });
-    },
-    [onDrag, win.id],
-  );
-
-  const stopDragging = useCallback(() => {
-    draggingRef.current = null;
-    window.removeEventListener("mousemove", onMouseMove);
-    window.removeEventListener("mouseup", stopDragging);
-  }, [onMouseMove]);
-
-  const startDragging = (event: React.MouseEvent<HTMLDivElement>) => {
-    onFocus(win.id);
-    draggingRef.current = {
-      offsetX: event.clientX - win.position.x,
-      offsetY: event.clientY - win.position.y,
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", stopDragging);
-  };
-
+const TiledPanel: React.FC<TiledPanelProps> = ({
+  win,
+  onClose,
+  onToggleCollapse,
+  onToggleExpand,
+  isCollapsed,
+  isExpanded,
+  children,
+}) => {
   return (
-    <section
-      className="floating-window"
-      style={{
-        left: win.position.x,
-        top: win.position.y,
-        width: win.size.width,
-        height: win.size.height,
-        zIndex: win.zIndex,
-      }}
-      onMouseDown={() => onFocus(win.id)}
-    >
-      <header className="window-header" onMouseDown={startDragging}>
+    <section className={`tile-panel ${isCollapsed ? "collapsed" : ""} ${isExpanded ? "expanded" : ""}`}>
+      <header className="tile-header">
         <strong>{win.title}</strong>
-        <button type="button" className="window-close" onClick={() => onClose(win.id)}>
-          x
-        </button>
+        <div className="tile-actions">
+          <button type="button" className="window-close" onClick={() => onToggleCollapse(win.id)}>
+            {isCollapsed ? "+" : "-"}
+          </button>
+          <button type="button" className="window-close" onClick={() => onToggleExpand(win.id)}>
+            {isExpanded ? "[]" : "<>"}
+          </button>
+          <button type="button" className="window-close" onClick={() => onClose(win.id)}>
+            x
+          </button>
+        </div>
       </header>
-      <div className="window-body">{children}</div>
+      {!isCollapsed ? <div className="tile-body">{children}</div> : null}
     </section>
   );
 };
@@ -249,11 +230,12 @@ type ChatWindowProps = {
   speak: (text: string) => void;
   messages: ChatMessage[];
   isLoading: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, verbosity: ResponseVerbosity) => void;
 };
 
 const ChatWindowComponent: React.FC<ChatWindowProps> = ({ mode, speak, messages, isLoading, onSend }) => {
   const [text, setText] = useState("");
+  const [verbosity, setVerbosity] = useState<ResponseVerbosity>("normal");
 
   const modeDescription =
     mode === "PHYSICS"
@@ -268,7 +250,7 @@ const ChatWindowComponent: React.FC<ChatWindowProps> = ({ mode, speak, messages,
     if (!value) {
       return;
     }
-    onSend(value);
+    onSend(value, verbosity);
     setText("");
   };
 
@@ -288,6 +270,16 @@ const ChatWindowComponent: React.FC<ChatWindowProps> = ({ mode, speak, messages,
         ))}
       </div>
       <form className="chat-input-row" onSubmit={submit}>
+        <select
+          className="chat-verbosity-select"
+          value={verbosity}
+          onChange={(event) => setVerbosity(event.target.value as ResponseVerbosity)}
+          aria-label="Response verbosity"
+        >
+          <option value="high">High</option>
+          <option value="normal">Normal</option>
+          <option value="brief">Brief</option>
+        </select>
         <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Message Aura..." />
         <button type="submit" disabled={isLoading}>
           {isLoading ? "..." : "Send"}
@@ -511,7 +503,7 @@ const CommandBar: React.FC<CommandBarProps> = ({ onCommand, onFileUpload, isList
         <input
           value={command}
           onChange={(event) => setCommand(event.target.value)}
-          placeholder="/CHAT, /IMAGE <prompt>, /VIDEO <prompt>, /BROWSER <query>"
+          placeholder="/UNIFIED, /FIELD, /TRAINING, /CHAT, /IMAGE <prompt>, /VIDEO <prompt>, /BROWSER <query>"
         />
         <button type="submit">Run</button>
       </form>
@@ -537,6 +529,8 @@ const CommandBar: React.FC<CommandBarProps> = ({ onCommand, onFileUpload, isList
 
 const App: React.FC = () => {
   const [windows, setWindows] = useState<WindowInstance[]>([]);
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<number, boolean>>({});
+  const [expandedPanelId, setExpandedPanelId] = useState<number | null>(null);
   const [screen] = useState<Screen>(Screen.COMMAND_CONSOLE);
   const [tasks] = useState(INITIAL_TASKS);
   const [feed, setFeed] = useState<FeedItem[]>([
@@ -585,6 +579,12 @@ const App: React.FC = () => {
       win = { ...base, type: "CHAT", title: options.title ?? "Aura Chat" };
       const chatMode = ((options as { chatMode?: ChatMode }).chatMode || "GENERAL") as ChatMode;
       chatWindowModesRef.current[id] = chatMode;
+    } else if (type === "UNIFIED_CHAT") {
+      win = { ...base, type: "UNIFIED_CHAT", title: options.title ?? "Unified Consciousness" };
+    } else if (type === "FIELD_PANEL") {
+      win = { ...base, type: "FIELD_PANEL", title: options.title ?? "Field + Simulation Archives" };
+    } else if (type === "TRAINING_DASHBOARD") {
+      win = { ...base, type: "TRAINING_DASHBOARD", title: options.title ?? "Sovereign Training Dashboard" };
     } else if (type === "IMAGE_GENERATOR") {
       win = {
         ...base,
@@ -618,6 +618,7 @@ const App: React.FC = () => {
     }
 
     setWindows((prev) => [...prev, win]);
+    setCollapsedPanels((prev) => ({ ...prev, [id]: false }));
   }, []);
 
   const addHotMemoryEntry = useCallback((text: string) => {
@@ -693,7 +694,7 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = useCallback(
-    async (mode: ChatMode, text: string) => {
+    async (mode: ChatMode, text: string, verbosity: ResponseVerbosity = "normal") => {
       if (loadingByMode[mode]) {
         return;
       }
@@ -730,6 +731,7 @@ const App: React.FC = () => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 input: text,
+                verbosity,
                 llm_provider: "gemini",
                 api_key: geminiApiKey || undefined,
                 model,
@@ -788,34 +790,31 @@ const App: React.FC = () => {
     if (chatWindowModesRef.current[id]) {
       delete chatWindowModesRef.current[id];
     }
+    setCollapsedPanels((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setExpandedPanelId((prev) => (prev === id ? null : prev));
     setWindows((prev) => prev.filter((win) => win.id !== id));
   };
 
-  const focusWindow = (id: number) => {
-    zIndexCounter.current += 1;
-    setWindows((prev) =>
-      prev.map((win) =>
-        win.id === id
-          ? {
-              ...win,
-              zIndex: zIndexCounter.current,
-            }
-          : win,
-      ),
-    );
+  const togglePanelCollapse = (id: number) => {
+    setCollapsedPanels((prev) => {
+      const willCollapse = !prev[id];
+      if (willCollapse) {
+        setExpandedPanelId((current) => (current === id ? null : current));
+      }
+      return {
+        ...prev,
+        [id]: willCollapse,
+      };
+    });
   };
 
-  const updateWindowPosition = (id: number, position: { x: number; y: number }) => {
-    setWindows((prev) =>
-      prev.map((win) =>
-        win.id === id
-          ? {
-              ...win,
-              position,
-            }
-          : win,
-      ),
-    );
+  const togglePanelExpand = (id: number) => {
+    setCollapsedPanels((prev) => ({ ...prev, [id]: false }));
+    setExpandedPanelId((prev) => (prev === id ? null : id));
   };
 
   const handleCommand = (cmd: string, arg: string) => {
@@ -824,9 +823,24 @@ const App: React.FC = () => {
         addWindow("CHAT", { title: "General Chat", chatMode: "GENERAL" } as Partial<WindowInstance>);
         pushFeed("info", "Opened Chat window.");
         break;
+      case "UNIFIED":
+      case "CONSCIOUSNESS":
+        addWindow("UNIFIED_CHAT", { title: "Unified Consciousness" } as Partial<WindowInstance>);
+        pushFeed("info", "Opened Unified Consciousness window.");
+        break;
       case "PHYSICS":
         addWindow("CHAT", { title: "Internal Physics Metrics", chatMode: "PHYSICS" } as Partial<WindowInstance>);
         pushFeed("info", "Opened Physics Metrics window.");
+        break;
+      case "FIELD":
+      case "ARCHIVES":
+        addWindow("FIELD_PANEL", { title: "Field + Simulation Archives" } as Partial<WindowInstance>);
+        pushFeed("info", "Opened Field Visualization panel.");
+        break;
+      case "TRAIN":
+      case "TRAINING":
+        addWindow("TRAINING_DASHBOARD", { title: "Sovereign Training Dashboard" } as Partial<WindowInstance>);
+        pushFeed("info", "Opened Training Dashboard.");
         break;
       case "REPORT":
       case "COMPONENT":
@@ -861,7 +875,7 @@ const App: React.FC = () => {
   const handleVoiceResult = useCallback(
     (transcript: string) => {
       pushFeed("autonomous", `Voice command: ${transcript}`);
-      void handleSendMessage("GENERAL", transcript);
+      void handleSendMessage("GENERAL", transcript, "normal");
     },
     [handleSendMessage, pushFeed],
   );
@@ -873,6 +887,24 @@ const App: React.FC = () => {
       return;
     }
     initializedWindowsRef.current = true;
+
+    addWindow("UNIFIED_CHAT", {
+      position: { x: 268, y: 54 },
+      size: { width: 640, height: 620 },
+      title: "Unified Consciousness",
+    } as Partial<WindowInstance>);
+
+    addWindow("FIELD_PANEL", {
+      position: { x: 924, y: 54 },
+      size: { width: 520, height: 420 },
+      title: "Field + Simulation Archives",
+    } as Partial<WindowInstance>);
+
+    addWindow("TRAINING_DASHBOARD", {
+      position: { x: 924, y: 484 },
+      size: { width: 520, height: 360 },
+      title: "Sovereign Training Dashboard",
+    } as Partial<WindowInstance>);
 
     addWindow("CHAT", {
       position: { x: Math.max(260, window.innerWidth - 980), y: 54 },
@@ -909,12 +941,18 @@ const App: React.FC = () => {
             speak={speak}
             messages={chatMessagesByMode[mode]}
             isLoading={loadingByMode[mode]}
-            onSend={(text) => {
-              void handleSendMessage(mode, text);
+            onSend={(text, verbosity) => {
+              void handleSendMessage(mode, text, verbosity);
             }}
           />
         );
       }
+      case "UNIFIED_CHAT":
+        return <ChatInterface />;
+      case "FIELD_PANEL":
+        return <NeuralArchives />;
+      case "TRAINING_DASHBOARD":
+        return <TrainingDashboard />;
       case "IMAGE_GENERATOR":
         return <ImageGeneratorWindowComponent initialPrompt={win.initialPrompt} />;
       case "VIDEO_GENERATOR":
@@ -979,9 +1017,17 @@ const App: React.FC = () => {
 
       <main className="desktop-layer">
         {windows.map((win) => (
-          <FloatingWindow key={win.id} win={win} onClose={closeWindow} onFocus={focusWindow} onDrag={updateWindowPosition}>
+          <TiledPanel
+            key={win.id}
+            win={win}
+            onClose={closeWindow}
+            onToggleCollapse={togglePanelCollapse}
+            onToggleExpand={togglePanelExpand}
+            isCollapsed={Boolean(collapsedPanels[win.id])}
+            isExpanded={expandedPanelId === win.id}
+          >
             {renderWindowContent(win)}
-          </FloatingWindow>
+          </TiledPanel>
         ))}
       </main>
 

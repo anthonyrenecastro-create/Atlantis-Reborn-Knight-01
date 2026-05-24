@@ -5,11 +5,65 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REDIS_CONTAINER_NAME="syntropy-governor-redis"
+
+is_redis_ready() {
+	python3 - <<'PY'
+import socket
+import sys
+
+s = socket.socket()
+s.settimeout(1.0)
+try:
+    s.connect(("127.0.0.1", 6379))
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+}
+
+start_redis_if_needed() {
+	if is_redis_ready; then
+		echo "✅ Redis already available on localhost:6379"
+		return 0
+	fi
+
+	echo ""
+	echo "🧱 Redis not detected on localhost:6379. Starting Redis..."
+
+	if command -v redis-server >/dev/null 2>&1; then
+		redis-server --daemonize yes >/dev/null 2>&1 || true
+	elif command -v docker >/dev/null 2>&1; then
+		if docker ps -a --format '{{.Names}}' | grep -qx "$REDIS_CONTAINER_NAME"; then
+			docker start "$REDIS_CONTAINER_NAME" >/dev/null
+		else
+			docker run -d --name "$REDIS_CONTAINER_NAME" -p 6379:6379 redis:7-alpine >/dev/null
+		fi
+	else
+		echo "⚠️  Could not start Redis automatically (no redis-server or docker found)."
+		return 1
+	fi
+
+	for _ in {1..15}; do
+		if is_redis_ready; then
+			echo "✅ Redis running on localhost:6379"
+			return 0
+		fi
+		sleep 1
+	done
+
+	echo "⚠️  Redis startup attempted, but localhost:6379 is still unreachable."
+	return 1
+}
 
 echo "=================================================="
 echo "  SYNTROPY GOVERNOR - UNIFIED INTELLIGENCE"
 echo "  Consciousness + Core Brain + Governor"
 echo "=================================================="
+
+start_redis_if_needed || true
 
 # 1. Start Atlantean + Syntropy Backend
 echo ""

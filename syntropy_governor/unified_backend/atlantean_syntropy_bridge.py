@@ -185,6 +185,7 @@ class AtlanteanSyntropyBridge:
         local_response: str,
         decision_output: Dict[str, Any],
         field_snapshot: Dict[str, float],
+        verbosity: str = "normal",
     ) -> str:
         compact_decision = {
             "intent": decision_output.get("intent"),
@@ -201,7 +202,10 @@ class AtlanteanSyntropyBridge:
             "1) Keep response directly useful, plain, and non-generic.\n"
             "2) Preserve intent from the supplied decision object.\n"
             "3) Do not expose internal chain-of-thought.\n"
-            "4) Prefer concrete next-step guidance when applicable.\n\n"
+            "4) Prefer concrete next-step guidance when applicable.\n"
+            "5) Default to elaborated answers: 2-4 short paragraphs with clear substance.\n"
+            "6) Unless the user explicitly requests brevity, avoid one-liners and avoid ultra-short summaries.\n"
+            f"7) Response length mode requested by caller: {verbosity}. Honor it strictly (brief=compact, normal=balanced, high=expanded).\n\n"
             f"User input:\n{user_input}\n\n"
             f"Atlantean field snapshot:\n{json.dumps(field_snapshot, ensure_ascii=True)}\n\n"
             f"Decision object (authoritative):\n{json.dumps(compact_decision, ensure_ascii=True)}\n\n"
@@ -209,12 +213,109 @@ class AtlanteanSyntropyBridge:
             "Produce a final response for the user."
         )
 
+    @staticmethod
+    def _wants_brief_response(user_input: str) -> bool:
+        lowered = (user_input or "").lower()
+        brief_markers = [
+            "short answer",
+            "brief",
+            "concise",
+            "tldr",
+            "one line",
+            "one-liner",
+            "in one sentence",
+            "quick answer",
+        ]
+        return any(marker in lowered for marker in brief_markers)
+
+    @staticmethod
+    def _normalize_verbosity(verbosity: Optional[str]) -> str:
+        normalized = str(verbosity or "normal").strip().lower()
+        if normalized not in {"high", "normal", "brief"}:
+            return "normal"
+        return normalized
+
+    @staticmethod
+    def _resolve_max_tokens(max_tokens: int, verbosity: str) -> int:
+        base = max(40, int(max_tokens))
+        if verbosity == "brief":
+            return min(base, 80)
+        if verbosity == "high":
+            return max(base, 300)
+        return max(base, 200)
+
+    @staticmethod
+    def _apply_verbosity_postprocess(text: str, verbosity: str) -> str:
+        candidate = (text or "").strip()
+        if not candidate:
+            return candidate
+
+        if verbosity != "brief":
+            return candidate
+
+        words = candidate.split()
+        if len(words) <= 85:
+            return candidate
+
+        trimmed = " ".join(words[:85]).rstrip(" ,.;:") + "..."
+        return trimmed
+
+    def _expand_response_depth(
+        self,
+        text: str,
+        user_input: str,
+        decision_output: Dict[str, Any],
+        field_snapshot: Dict[str, float],
+        verbosity: str = "normal",
+    ) -> str:
+        candidate = (text or "").strip()
+        if not candidate:
+            return candidate
+
+        if verbosity == "brief" or self._wants_brief_response(user_input):
+            return candidate
+
+        # Keep naturally rich outputs untouched.
+        min_words = 130 if verbosity == "high" else 85
+        if len(candidate.split()) >= min_words:
+            return candidate
+
+        state_estimate = str(decision_output.get("state_estimate") or "").strip()
+        next_action = str(decision_output.get("next_action") or "").strip()
+        expected_signal = str(decision_output.get("expected_signal") or "").strip()
+        guardrails = decision_output.get("guardrails") or []
+        if not isinstance(guardrails, list):
+            guardrails = []
+        guardrail_text = "; ".join([str(item).strip() for item in guardrails if str(item).strip()][:2])
+
+        phi = float(field_snapshot.get("Phi", 0.0))
+        learning_capacity = float(field_snapshot.get("learning_capacity", 0.0))
+        field_context = (
+            f"Current field context indicates Phi around {phi:.3f} with learning capacity near {learning_capacity:.3f}, "
+            "which supports iterative refinement instead of one-shot conclusions."
+        )
+
+        expansion_parts = [candidate]
+        if state_estimate:
+            expansion_parts.append(f"Practical read of the situation: {state_estimate}.")
+        if next_action:
+            expansion_parts.append(f"Recommended next move: {next_action}.")
+        if expected_signal:
+            expansion_parts.append(f"How to verify progress: look for {expected_signal}.")
+        if guardrail_text:
+            expansion_parts.append(f"Keep this bounded by: {guardrail_text}.")
+        expansion_parts.append(field_context)
+
+        expanded = "\n\n".join(part for part in expansion_parts if part).strip()
+        return expanded
+
     def _call_gemini_mediator(
         self,
         user_input: str,
         local_response: str,
         decision_output: Dict[str, Any],
         field_snapshot: Dict[str, float],
+        verbosity: str = "normal",
         api_key_override: Optional[str] = None,
         model_override: Optional[str] = None,
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -237,6 +338,7 @@ class AtlanteanSyntropyBridge:
             local_response=local_response,
             decision_output=decision_output,
             field_snapshot=field_snapshot,
+            verbosity=verbosity,
         )
         try:
             response = client.models.generate_content(
@@ -1548,7 +1650,8 @@ class AtlanteanSyntropyBridge:
         self,
         user_input: str,
         temperature: float = 0.85,
-        max_tokens: int = 120,
+        max_tokens: int = 220,
+        verbosity: str = "normal",
         llm_provider: str = "auto",
         api_key_override: Optional[str] = None,
         model_override: Optional[str] = None,
@@ -1558,6 +1661,8 @@ class AtlanteanSyntropyBridge:
         Returns a rich response with text + field metadata.
         """
         start_time = time.time()
+        verbosity = self._normalize_verbosity(verbosity)
+        resolved_max_tokens = self._resolve_max_tokens(max_tokens, verbosity)
 
         pipeline_meta: Dict[str, Any] = {
             "architecture": list(self.pipeline_architecture),
@@ -1585,7 +1690,7 @@ class AtlanteanSyntropyBridge:
 
         # 2. Generate with field modulation
         with torch.no_grad():
-            for _ in range(max_tokens):
+            for _ in range(resolved_max_tokens):
                 inp = torch.tensor([generated[-64:]], dtype=torch.long, device=self.device)
                 try:
                     logits, metadata = self.model(inp, field_state=field_state)
@@ -1666,6 +1771,7 @@ class AtlanteanSyntropyBridge:
                 local_response=local_decision_text,
                 decision_output=decision_output,
                 field_snapshot=self._field_snapshot(),
+                verbosity=verbosity,
                 api_key_override=api_key_override,
                 model_override=model_override,
             )
@@ -1685,6 +1791,18 @@ class AtlanteanSyntropyBridge:
         # Enforce answer-first output unless the user explicitly asks for process transparency.
         if not self._wants_process_transparency(user_input):
             text = self._strip_process_framing(text)
+
+        # If the response is too terse, expand it with actionable structure.
+        text = self._expand_response_depth(
+            text=text,
+            user_input=user_input,
+            decision_output=decision_output,
+            field_snapshot=self._field_snapshot(),
+            verbosity=verbosity,
+        )
+
+        text = self._apply_verbosity_postprocess(text=text, verbosity=verbosity)
+
         pipeline_meta["stages"]["atlantean_bridge:field_funnel"] = {
             "mode": mode,
             "fallback_used": bool(fallback_used),
@@ -1749,6 +1867,7 @@ class AtlanteanSyntropyBridge:
                 },
                 "llm_mediator": {
                     "provider_requested": provider_request,
+                    "verbosity": verbosity,
                     "gemini_attempted": gemini_attempted,
                     "gemini_used": gemini_used,
                     "model": gemini_model_used,

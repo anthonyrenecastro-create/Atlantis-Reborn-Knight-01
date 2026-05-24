@@ -3,6 +3,8 @@ import { useAtlantean } from "../hooks/useAtlantean";
 import { useTheme } from "../context/ThemeContext";
 import VoiceControls from "./VoiceControls";
 
+type ResponseVerbosity = "high" | "normal" | "brief";
+
 export default function ChatInterface() {
   const { mode, themes, setMode } = useTheme();
   const {
@@ -27,6 +29,7 @@ export default function ChatInterface() {
   const [trainingJobId, setTrainingJobId] = useState<string | null>(null);
   const [jobState, setJobState] = useState<"idle" | "queued" | "running" | "completed" | "failed">("idle");
   const [trainingLogTail, setTrainingLogTail] = useState("");
+  const [verbosity, setVerbosity] = useState<ResponseVerbosity>("normal");
 
   const [epochs, setEpochs] = useState(2);
   const [batchSize, setBatchSize] = useState(8);
@@ -74,7 +77,7 @@ export default function ChatInterface() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    await submitQuery(input);
+    await submitQuery(input, { verbosity });
     await refreshSovereignStatus();
   }
 
@@ -82,9 +85,22 @@ export default function ChatInterface() {
     if (!input.trim()) {
       return;
     }
-    await submitQuery(input);
+    await submitQuery(input, { verbosity });
     await refreshSovereignStatus();
   }
+
+  const decision = reply?.decision_output;
+  const decisionOptions = decision?.options ?? [];
+  const selectedOption = decision?.options?.find((item) => item.id === decision.selected_option);
+  const memoryProfile = decision?.memory_trace?.profile;
+  const pipelineStages = reply?.metadata?.pipeline?.stages || {};
+  const quadraStage = pipelineStages["quadra_seer:final_output_integration"];
+  const stateEstimate =
+    typeof decision?.state_estimate === "string"
+      ? decision.state_estimate
+      : decision?.state_estimate
+        ? JSON.stringify(decision.state_estimate)
+        : "-";
 
   function onClearInputFromVoice() {
     setInput("");
@@ -186,6 +202,16 @@ export default function ChatInterface() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask the field-modulated core..."
         />
+        <label htmlFor="verbosity">Response Verbosity</label>
+        <select
+          id="verbosity"
+          value={verbosity}
+          onChange={(e) => setVerbosity(e.target.value as ResponseVerbosity)}
+        >
+          <option value="high">high</option>
+          <option value="normal">normal</option>
+          <option value="brief">brief</option>
+        </select>
         <button type="submit" className="primary-btn" disabled={isLoading}>
           {isLoading ? "Querying..." : "Send"}
         </button>
@@ -332,8 +358,156 @@ export default function ChatInterface() {
             <span>{reply?.field_state?.Phi?.toFixed(4) ?? "-"}</span>
           </div>
           <div>
+            <strong>Learning Capacity</strong>
+            <span>{reply?.field_state?.learning_capacity?.toFixed(4) ?? "-"}</span>
+          </div>
+          <div>
             <strong>Fallback Used</strong>
             <span>{reply?.metadata?.sovereign?.fallback_used ? "Yes" : "No"}</span>
+          </div>
+          <div>
+            <strong>Intent Confidence</strong>
+            <span>{reply?.metadata?.sovereign?.intent_confidence?.toFixed(3) ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Local Quality</strong>
+            <span>{reply?.metadata?.sovereign?.local_quality?.toFixed(3) ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Mediator</strong>
+            <span>
+              {reply?.metadata?.llm_mediator?.gemini_used
+                ? `Gemini (${reply.metadata.llm_mediator.model || "model n/a"})`
+                : "Local stack"}
+            </span>
+          </div>
+          <div>
+            <strong>Verbosity</strong>
+            <span>{reply?.metadata?.llm_mediator?.verbosity ?? verbosity}</span>
+          </div>
+          <div>
+            <strong>Ledger Session</strong>
+            <span>{quadraStage?.session_id ?? reply?.interaction_id ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Ledger Finalizer</strong>
+            <span>{quadraStage?.finalizer ?? quadraStage?.status ?? "-"}</span>
+          </div>
+        </div>
+
+        <div className="meta-grid">
+          <div>
+            <strong>Decision Intent</strong>
+            <span>{decision?.intent ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Hypothesis</strong>
+            <span>{decision?.hypothesis ?? "-"}</span>
+          </div>
+          <div>
+            <strong>State Estimate</strong>
+            <span>{stateEstimate}</span>
+          </div>
+          <div>
+            <strong>Next Action</strong>
+            <span>{decision?.next_action ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Expected Signal</strong>
+            <span>{decision?.expected_signal ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Selected Confidence</strong>
+            <span>{selectedOption?.confidence?.toFixed(3) ?? "-"}</span>
+          </div>
+        </div>
+
+        {decisionOptions.length > 0 ? (
+          <div className="options-matrix-wrap">
+            <h3>Candidate Confidence Matrix</h3>
+            <table className="options-matrix-table">
+              <thead>
+                <tr>
+                  <th>Option</th>
+                  <th>Action</th>
+                  <th>Confidence</th>
+                  <th>Risk</th>
+                  <th>Evidence Needed</th>
+                  <th>Selected</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decisionOptions.map((option, idx) => {
+                  const optionKey = option.id ?? `option-${idx}`;
+                  const evidence = option.evidence_needed?.join(" | ") || "-";
+                  const isSelected = Boolean(option.id && option.id === decision?.selected_option);
+                  return (
+                    <tr key={optionKey} className={isSelected ? "is-selected" : ""}>
+                      <td>{option.id ?? "-"}</td>
+                      <td>{option.action ?? "-"}</td>
+                      <td>{option.confidence?.toFixed(3) ?? "-"}</td>
+                      <td>{option.risk ?? "-"}</td>
+                      <td>{evidence}</td>
+                      <td>{isSelected ? "yes" : "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        <div className="meta-grid">
+          <div>
+            <strong>Recalled Learned Hint</strong>
+            <span>{decision?.memory_trace?.learned_hint ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Memory Match Count</strong>
+            <span>{String(memoryProfile?.match_count ?? "-")}</span>
+          </div>
+          <div>
+            <strong>Preferences</strong>
+            <span>{memoryProfile?.preferences?.join(" | ") || "-"}</span>
+          </div>
+          <div>
+            <strong>Recurring Topics</strong>
+            <span>{memoryProfile?.recurring_topics?.join(" | ") || "-"}</span>
+          </div>
+          <div>
+            <strong>Field Influence</strong>
+            <span>{decision?.influences?.field?.weight?.toFixed(3) ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Memory Influence</strong>
+            <span>{decision?.influences?.memory?.weight?.toFixed(3) ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Field Lens</strong>
+            <span>{decision?.influences?.field?.lens ?? "-"}</span>
+          </div>
+          <div>
+            <strong>HRM Context</strong>
+            <span>Not yet exposed in unified payload</span>
+          </div>
+        </div>
+
+        <div className="meta-grid">
+          <div>
+            <strong>Guardrails</strong>
+            <span>{decision?.guardrails?.join(" | ") || "-"}</span>
+          </div>
+          <div>
+            <strong>Fallback Reason</strong>
+            <span>{reply?.metadata?.sovereign?.fallback_reason ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Ledger Log Path</strong>
+            <span>{quadraStage?.local_log_path ?? "-"}</span>
+          </div>
+          <div>
+            <strong>Integrity Status</strong>
+            <span>{quadraStage?.enabled ? "integrated" : quadraStage?.status ?? "unknown"}</span>
           </div>
         </div>
         {reply?.metadata?.warning ? <p className="warning">{reply.metadata.warning}</p> : null}

@@ -1,14 +1,25 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - syntropy-net
+
   syntropy-governor-backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     ports:
       - "5001:5001"
+    depends_on:
+      - redis
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
     restart: unless-stopped
     networks:
       - syntropy-net

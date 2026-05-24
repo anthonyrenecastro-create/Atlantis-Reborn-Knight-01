@@ -18,3 +18,13 @@ View your app in AI Studio: https://ai.studio/apps/drive/12CDszUJAxwc5CBTjwFTX8I
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Canonical Runtime (Unified)
+
+This `consciousness/` folder is now part of the unified Syntropy Governor stack.
+
+- Frontend canonical entrypoint: `consciousness/src/App.tsx`
+- Backend canonical entrypoint: `unified_backend/server.py`
+- Canonical startup command (from `syntropy_governor/`): `./scripts/start_unified.sh`
+
+Legacy standalone backend files inside `consciousness/` are preserved only for reference and are not the default runtime path.
