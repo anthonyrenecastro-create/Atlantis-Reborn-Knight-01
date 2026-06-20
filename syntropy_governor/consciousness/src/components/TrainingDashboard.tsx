@@ -118,55 +118,66 @@ export default function TrainingDashboard() {
         </div>
       </div>
 
-      <div className="training-controls">
-        <label>
-          Epochs
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={epochs}
-            onChange={(e) => setEpochs(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
-          />
-        </label>
-        <label>
-          Batch
-          <input
-            type="number"
-            min={1}
-            max={64}
-            value={batchSize}
-            onChange={(e) => setBatchSize(Math.max(1, Math.min(64, Number(e.target.value) || 1)))}
-          />
-        </label>
-        <label>
-          Seq Len
-          <input
-            type="number"
-            min={16}
-            max={512}
-            value={seqLen}
-            onChange={(e) => setSeqLen(Math.max(16, Math.min(512, Number(e.target.value) || 16)))}
-          />
-        </label>
-        <label>
-          Export Limit
-          <input
-            type="number"
-            min={10}
-            max={10000}
-            value={exportLimit}
-            onChange={(e) => setExportLimit(Math.max(10, Math.min(10000, Number(e.target.value) || 10)))}
-          />
-        </label>
-        <button type="button" className="primary-btn" onClick={() => void startTraining()}>
-          Launch Training
-        </button>
-      </div>
+      <section className="training-surface training-launch-panel">
+        <div className="section-header">
+          <h4>Launch Configuration</h4>
+          <p>Set a compact training recipe, export a fresh dataset slice, and reload the resulting checkpoint automatically.</p>
+        </div>
+        <div className="training-controls">
+          <label>
+            Epochs
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={epochs}
+              onChange={(e) => setEpochs(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+            />
+          </label>
+          <label>
+            Batch
+            <input
+              type="number"
+              min={1}
+              max={64}
+              value={batchSize}
+              onChange={(e) => setBatchSize(Math.max(1, Math.min(64, Number(e.target.value) || 1)))}
+            />
+          </label>
+          <label>
+            Seq Len
+            <input
+              type="number"
+              min={16}
+              max={512}
+              value={seqLen}
+              onChange={(e) => setSeqLen(Math.max(16, Math.min(512, Number(e.target.value) || 16)))}
+            />
+          </label>
+          <label>
+            Export Limit
+            <input
+              type="number"
+              min={10}
+              max={10000}
+              value={exportLimit}
+              onChange={(e) => setExportLimit(Math.max(10, Math.min(10000, Number(e.target.value) || 10)))}
+            />
+          </label>
+          <button type="button" className="primary-btn" onClick={() => void startTraining()}>
+            Launch Training
+          </button>
+        </div>
+      </section>
 
       {error ? <p className="warning">{error}</p> : null}
 
-      <div className="training-jobs-table-wrap">
+      <section className="training-surface">
+        <div className="section-header">
+          <h4>Job Queue</h4>
+          <p>Inspect recent runs, select one for details, and hot-swap only completed checkpoints.</p>
+        </div>
+        <div className="training-jobs-table-wrap">
         <table className="training-jobs-table">
           <thead>
             <tr>
@@ -214,10 +225,11 @@ export default function TrainingDashboard() {
             )}
           </tbody>
         </table>
-      </div>
+        </div>
+      </section>
 
       {selectedJob ? (
-        <section className="training-job-detail">
+        <section className="training-job-detail training-surface">
           <header>
             <h4>Job Detail Drawer</h4>
             <p>Selected: {selectedJob.id}</p>
@@ -261,7 +273,7 @@ export default function TrainingDashboard() {
         </section>
       ) : null}
 
-      <section className="training-swap-history">
+      <section className="training-swap-history training-surface">
         <header>
           <h4>Swap History</h4>
             <p>Backend-backed checkpoint swap ledger.</p>

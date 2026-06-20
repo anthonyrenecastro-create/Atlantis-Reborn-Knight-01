@@ -166,6 +166,10 @@ export default function NeuralArchives() {
       </div>
 
       <div className="archives-controls">
+        <div className="section-header">
+          <h3>Simulation Search</h3>
+          <p>Filter backend records, then export the currently loaded archive slice.</p>
+        </div>
         <label htmlFor="simulation-search">Search Simulations</label>
         <div className="archives-controls-row">
           <input
@@ -188,12 +192,16 @@ export default function NeuralArchives() {
         {simulationError ? <p className="warning">{simulationError}</p> : null}
       </div>
 
-      <FieldHeatmap title="Field Heatmap" values={heatmap} />
-
-      <SimulationVisualizer simulations={simulations} />
+      <div className="archives-visual-grid">
+        <FieldHeatmap title="Field Heatmap" values={heatmap} />
+        <SimulationVisualizer simulations={simulations} />
+      </div>
 
       <div className="archives-history">
-        <strong>Recent Backend Simulations</strong>
+        <div className="section-header">
+          <h3>Recent Backend Simulations</h3>
+          <p>The latest records are summarized here for quick scanning before a deeper export.</p>
+        </div>
         <ul>
           {simulations.length === 0 ? (
             <li>No simulation records found.</li>

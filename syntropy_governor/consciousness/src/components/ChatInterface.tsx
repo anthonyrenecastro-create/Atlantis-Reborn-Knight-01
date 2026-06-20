@@ -194,6 +194,10 @@ export default function ChatInterface() {
       </header>
 
       <form className="chat-form" onSubmit={onSubmit}>
+        <div className="section-header">
+          <h2>Prompt Composer</h2>
+          <p>Shape the next field-guided query, then tune the level of detail before sending.</p>
+        </div>
         <label htmlFor="prompt">Prompt</label>
         <textarea
           id="prompt"
@@ -219,7 +223,10 @@ export default function ChatInterface() {
 
       <section className="sovereign-panel">
         <div className="sovereign-header">
-          <h2>Sovereign Training Panel</h2>
+          <div className="section-header">
+            <h2>Sovereign Training Panel</h2>
+            <p>Review local-only operating state and launch a hot-swap training cycle from the same surface.</p>
+          </div>
           <button type="button" className="ghost-btn" onClick={() => void refreshSovereignStatus()}>
             Refresh
           </button>
@@ -330,8 +337,11 @@ export default function ChatInterface() {
       />
 
       <article className="response-card">
-        <h2>Response</h2>
-        <p>{reply?.response ?? "No response yet."}</p>
+        <div className="response-header section-header">
+          <h2>Response</h2>
+          <p>Generated output, reasoning traces, and memory influence summaries for the latest interaction.</p>
+        </div>
+        <div className="response-body">{reply?.response ?? "No response yet."}</div>
         <div className="feedback-row">
           <button type="button" className="ghost-btn" onClick={() => onFeedback("user_confirmation")}>
             Helpful
@@ -344,58 +354,63 @@ export default function ChatInterface() {
           </button>
         </div>
         {feedbackStatus ? <p className="warning">{feedbackStatus}</p> : null}
-        <div className="meta-grid">
-          <div>
-            <strong>Mode</strong>
-            <span>{reply?.metadata?.mode ?? "-"}</span>
+        <section className="meta-section">
+          <h3>Operational Telemetry</h3>
+          <div className="meta-grid">
+            <div>
+              <strong>Mode</strong>
+              <span>{reply?.metadata?.mode ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Latency</strong>
+              <span>{reply?.metadata?.latency_ms ? `${reply.metadata.latency_ms} ms` : "-"}</span>
+            </div>
+            <div>
+              <strong>Phi</strong>
+              <span>{reply?.field_state?.Phi?.toFixed(4) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Learning Capacity</strong>
+              <span>{reply?.field_state?.learning_capacity?.toFixed(4) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Fallback Used</strong>
+              <span>{reply?.metadata?.sovereign?.fallback_used ? "Yes" : "No"}</span>
+            </div>
+            <div>
+              <strong>Intent Confidence</strong>
+              <span>{reply?.metadata?.sovereign?.intent_confidence?.toFixed(3) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Local Quality</strong>
+              <span>{reply?.metadata?.sovereign?.local_quality?.toFixed(3) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Mediator</strong>
+              <span>
+                {reply?.metadata?.llm_mediator?.gemini_used
+                  ? `Gemini (${reply.metadata.llm_mediator.model || "model n/a"})`
+                  : "Local stack"}
+              </span>
+            </div>
+            <div>
+              <strong>Verbosity</strong>
+              <span>{reply?.metadata?.llm_mediator?.verbosity ?? verbosity}</span>
+            </div>
+            <div>
+              <strong>Ledger Session</strong>
+              <span>{quadraStage?.session_id ?? reply?.interaction_id ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Ledger Finalizer</strong>
+              <span>{quadraStage?.finalizer ?? quadraStage?.status ?? "-"}</span>
+            </div>
           </div>
-          <div>
-            <strong>Latency</strong>
-            <span>{reply?.metadata?.latency_ms ? `${reply.metadata.latency_ms} ms` : "-"}</span>
-          </div>
-          <div>
-            <strong>Phi</strong>
-            <span>{reply?.field_state?.Phi?.toFixed(4) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Learning Capacity</strong>
-            <span>{reply?.field_state?.learning_capacity?.toFixed(4) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Fallback Used</strong>
-            <span>{reply?.metadata?.sovereign?.fallback_used ? "Yes" : "No"}</span>
-          </div>
-          <div>
-            <strong>Intent Confidence</strong>
-            <span>{reply?.metadata?.sovereign?.intent_confidence?.toFixed(3) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Local Quality</strong>
-            <span>{reply?.metadata?.sovereign?.local_quality?.toFixed(3) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Mediator</strong>
-            <span>
-              {reply?.metadata?.llm_mediator?.gemini_used
-                ? `Gemini (${reply.metadata.llm_mediator.model || "model n/a"})`
-                : "Local stack"}
-            </span>
-          </div>
-          <div>
-            <strong>Verbosity</strong>
-            <span>{reply?.metadata?.llm_mediator?.verbosity ?? verbosity}</span>
-          </div>
-          <div>
-            <strong>Ledger Session</strong>
-            <span>{quadraStage?.session_id ?? reply?.interaction_id ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Ledger Finalizer</strong>
-            <span>{quadraStage?.finalizer ?? quadraStage?.status ?? "-"}</span>
-          </div>
-        </div>
+        </section>
 
-        <div className="meta-grid">
+        <section className="meta-section">
+          <h3>Decision Trace</h3>
+          <div className="meta-grid">
           <div>
             <strong>Decision Intent</strong>
             <span>{decision?.intent ?? "-"}</span>
@@ -420,7 +435,8 @@ export default function ChatInterface() {
             <strong>Selected Confidence</strong>
             <span>{selectedOption?.confidence?.toFixed(3) ?? "-"}</span>
           </div>
-        </div>
+          </div>
+        </section>
 
         {decisionOptions.length > 0 ? (
           <div className="options-matrix-wrap">
@@ -457,59 +473,65 @@ export default function ChatInterface() {
           </div>
         ) : null}
 
-        <div className="meta-grid">
-          <div>
-            <strong>Recalled Learned Hint</strong>
-            <span>{decision?.memory_trace?.learned_hint ?? "-"}</span>
+        <section className="meta-section">
+          <h3>Memory and Influence</h3>
+          <div className="meta-grid">
+            <div>
+              <strong>Recalled Learned Hint</strong>
+              <span>{decision?.memory_trace?.learned_hint ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Memory Match Count</strong>
+              <span>{String(memoryProfile?.match_count ?? "-")}</span>
+            </div>
+            <div>
+              <strong>Preferences</strong>
+              <span>{memoryProfile?.preferences?.join(" | ") || "-"}</span>
+            </div>
+            <div>
+              <strong>Recurring Topics</strong>
+              <span>{memoryProfile?.recurring_topics?.join(" | ") || "-"}</span>
+            </div>
+            <div>
+              <strong>Field Influence</strong>
+              <span>{decision?.influences?.field?.weight?.toFixed(3) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Memory Influence</strong>
+              <span>{decision?.influences?.memory?.weight?.toFixed(3) ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Field Lens</strong>
+              <span>{decision?.influences?.field?.lens ?? "-"}</span>
+            </div>
+            <div>
+              <strong>HRM Context</strong>
+              <span>Not yet exposed in unified payload</span>
+            </div>
           </div>
-          <div>
-            <strong>Memory Match Count</strong>
-            <span>{String(memoryProfile?.match_count ?? "-")}</span>
-          </div>
-          <div>
-            <strong>Preferences</strong>
-            <span>{memoryProfile?.preferences?.join(" | ") || "-"}</span>
-          </div>
-          <div>
-            <strong>Recurring Topics</strong>
-            <span>{memoryProfile?.recurring_topics?.join(" | ") || "-"}</span>
-          </div>
-          <div>
-            <strong>Field Influence</strong>
-            <span>{decision?.influences?.field?.weight?.toFixed(3) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Memory Influence</strong>
-            <span>{decision?.influences?.memory?.weight?.toFixed(3) ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Field Lens</strong>
-            <span>{decision?.influences?.field?.lens ?? "-"}</span>
-          </div>
-          <div>
-            <strong>HRM Context</strong>
-            <span>Not yet exposed in unified payload</span>
-          </div>
-        </div>
+        </section>
 
-        <div className="meta-grid">
-          <div>
-            <strong>Guardrails</strong>
-            <span>{decision?.guardrails?.join(" | ") || "-"}</span>
+        <section className="meta-section">
+          <h3>Guardrails and Ledger</h3>
+          <div className="meta-grid">
+            <div>
+              <strong>Guardrails</strong>
+              <span>{decision?.guardrails?.join(" | ") || "-"}</span>
+            </div>
+            <div>
+              <strong>Fallback Reason</strong>
+              <span>{reply?.metadata?.sovereign?.fallback_reason ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Ledger Log Path</strong>
+              <span>{quadraStage?.local_log_path ?? "-"}</span>
+            </div>
+            <div>
+              <strong>Integrity Status</strong>
+              <span>{quadraStage?.enabled ? "integrated" : quadraStage?.status ?? "unknown"}</span>
+            </div>
           </div>
-          <div>
-            <strong>Fallback Reason</strong>
-            <span>{reply?.metadata?.sovereign?.fallback_reason ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Ledger Log Path</strong>
-            <span>{quadraStage?.local_log_path ?? "-"}</span>
-          </div>
-          <div>
-            <strong>Integrity Status</strong>
-            <span>{quadraStage?.enabled ? "integrated" : quadraStage?.status ?? "unknown"}</span>
-          </div>
-        </div>
+        </section>
         {reply?.metadata?.warning ? <p className="warning">{reply.metadata.warning}</p> : null}
         {reply?.error ? <p className="warning">{String(reply.error)}</p> : null}
       </article>

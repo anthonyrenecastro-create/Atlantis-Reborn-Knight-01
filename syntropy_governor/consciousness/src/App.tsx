@@ -969,69 +969,114 @@ const App: React.FC = () => {
   return (
     <div className="aetherium-app">
       <div className="aetherium-bg" />
-      <header className="top-status-bar">
-        <div className="brand-wrap">
-          <AuraAvatar />
-          <div>
-            <h1>Aetherium Interface</h1>
-            <p>{screen}</p>
+      <div className="aetherium-orbit aetherium-orbit-one" />
+      <div className="aetherium-orbit aetherium-orbit-two" />
+
+      <div className="app-shell">
+        <header className="top-status-bar">
+          <div className="brand-wrap">
+            <AuraAvatar />
+            <div className="brand-copy">
+              <span className="eyebrow">Sovereign local intelligence</span>
+              <h1>Aetherium Interface</h1>
+              <p>{screen}</p>
+            </div>
           </div>
-        </div>
-        <div className="kpi-wrap">
-          <span>Tasks: {tasks.length}</span>
-          <span>Signals: {chartData.length}</span>
-          <span>Feed: {feed.length}</span>
-        </div>
-      </header>
+          <div className="kpi-wrap" aria-label="System highlights">
+            <article className="kpi-card">
+              <span className="kpi-label">Active windows</span>
+              <strong>{windows.length}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Signal frames</span>
+              <strong>{chartData.length}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Task modules</span>
+              <strong>{tasks.length}</strong>
+            </article>
+          </div>
+        </header>
 
-      <aside className="left-rail">
-        <h2>Hot/Cold Memory History</h2>
-        <div className="memory-history-section">
-          <h3>Hot Memory</h3>
-          <ul>
-            {hotMemoryHistory.map((entry) => (
-              <li key={entry.id}>{entry.text}</li>
+        <section className="scene-banner" aria-label="Mission summary">
+          <div className="scene-banner-copy">
+            <span className="eyebrow">Command surface</span>
+            <h2>Monitor cognition, steer training, and inspect field activity from one calmer workspace.</h2>
+            <p>
+              The interface now prioritizes reading flow, panel separation, and a more deliberate visual rhythm for long sessions.
+            </p>
+          </div>
+          <div className="scene-banner-meta">
+            <div>
+              <span>Voice input</span>
+              <strong>{isListening ? "Live" : "Standby"}</strong>
+            </div>
+            <div>
+              <span>Feed events</span>
+              <strong>{feed.length}</strong>
+            </div>
+            <div>
+              <span>Memory traces</span>
+              <strong>{hotMemoryHistory.length + coldMemoryHistory.length}</strong>
+            </div>
+          </div>
+        </section>
+
+        <div className="workspace-shell">
+          <aside className="left-rail">
+            <h2>Memory Trace</h2>
+            <div className="memory-history-section">
+              <h3>Hot Memory</h3>
+              <ul>
+                {hotMemoryHistory.length ? (
+                  hotMemoryHistory.map((entry) => <li key={entry.id}>{entry.text}</li>)
+                ) : (
+                  <li className="empty-state">Live telemetry snapshots will appear here.</li>
+                )}
+              </ul>
+            </div>
+            <div className="memory-history-section">
+              <h3>Cold Memory</h3>
+              <ul>
+                {coldMemoryHistory.length ? (
+                  coldMemoryHistory.map((entry) => <li key={entry.id}>{entry.text}</li>)
+                ) : (
+                  <li className="empty-state">Longer-lived summaries will be retained here.</li>
+                )}
+              </ul>
+            </div>
+          </aside>
+
+          <main className="desktop-layer">
+            {windows.map((win) => (
+              <TiledPanel
+                key={win.id}
+                win={win}
+                onClose={closeWindow}
+                onToggleCollapse={togglePanelCollapse}
+                onToggleExpand={togglePanelExpand}
+                isCollapsed={Boolean(collapsedPanels[win.id])}
+                isExpanded={expandedPanelId === win.id}
+              >
+                {renderWindowContent(win)}
+              </TiledPanel>
             ))}
-          </ul>
+          </main>
+
+          <aside className="right-rail">
+            <h2>Cognitive Feed</h2>
+            <ul>
+              {feed.map((item) => (
+                <li key={item.id} className={`feed-${item.type}`}>
+                  {item.text}
+                </li>
+              ))}
+            </ul>
+          </aside>
         </div>
-        <div className="memory-history-section">
-          <h3>Cold Memory</h3>
-          <ul>
-            {coldMemoryHistory.map((entry) => (
-              <li key={entry.id}>{entry.text}</li>
-            ))}
-          </ul>
-        </div>
-      </aside>
 
-      <aside className="right-rail">
-        <h2>Cognitive Feed</h2>
-        <ul>
-          {feed.map((item) => (
-            <li key={item.id} className={`feed-${item.type}`}>
-              {item.text}
-            </li>
-          ))}
-        </ul>
-      </aside>
-
-      <main className="desktop-layer">
-        {windows.map((win) => (
-          <TiledPanel
-            key={win.id}
-            win={win}
-            onClose={closeWindow}
-            onToggleCollapse={togglePanelCollapse}
-            onToggleExpand={togglePanelExpand}
-            isCollapsed={Boolean(collapsedPanels[win.id])}
-            isExpanded={expandedPanelId === win.id}
-          >
-            {renderWindowContent(win)}
-          </TiledPanel>
-        ))}
-      </main>
-
-      <CommandBar onCommand={handleCommand} onFileUpload={handleFileUpload} isListening={isListening} onToggleListening={toggleListening} />
+        <CommandBar onCommand={handleCommand} onFileUpload={handleFileUpload} isListening={isListening} onToggleListening={toggleListening} />
+      </div>
     </div>
   );
 };
